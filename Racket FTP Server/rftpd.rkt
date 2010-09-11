@@ -26,7 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #lang racket
 
-(require (prefix-in ftp: (file "lib-ftp-server.rkt")))
+(require (prefix-in ftp: (file "lib-rftpd.rkt")))
 
 (define server-host "127.0.0.1")
 (define server-port 21)
