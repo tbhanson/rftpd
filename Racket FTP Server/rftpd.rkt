@@ -1,6 +1,6 @@
-#| 04.09.2010 23:23
+#| 12.09.2010 17:42
 
-Racket FTP Server v1.0.4
+Racket FTP Server v1.0.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -27,6 +27,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #lang racket
 
 (require (prefix-in ftp: (file "lib-rftpd.rkt")))
+
+(define name&version "Racket FTP Server v1.0.5")
+(define copyright "Copyright (c) 2010 Mikhail Mosienko <cnet@land.ru>")
 
 (define server-host "127.0.0.1")
 (define server-port 21)
@@ -98,9 +101,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (load-users)
   (unless log-out
     (set! log-out (open-output-file "logs/ftp.log" #:exists 'append)))
-  (ftp:set-log-output-port log-out)
-  (displayln "Racket FTP Server v1.4")
-  (displayln "Copyright (c) 2010 Mikhail Mosienko <cnet@land.ru>\n")
+  (ftp:log-output-port log-out)
+  (displayln name&version)
+  (displayln copyright) (newline)
   (run)
   (server-control control-host control-port)
   (let loop ()
@@ -123,9 +126,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         ((passive-ports)
                          (ftp:set-passive-ports (second param) (third param)))
                         ((default-locale-encoding)
-                         (ftp:set-default-locale-encoding (second param)))
+                         (ftp:default-locale-encoding (second param)))
                         ((ftp-root-dir)
-                         (ftp:set-ftp-root-dir (second param)))
+                         (ftp:default-root-dir (second param)))
                         ((log-file)
                          (when log-out (close-output-port log-out))
                          (set! log-out (open-output-file (second param) #:exists 'append)))
@@ -148,3 +151,4 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (cdr conf)))))))
 
 (start)
+
