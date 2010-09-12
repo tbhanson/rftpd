@@ -1,6 +1,6 @@
-#| 11.09.2010 14:47
+#| 12.09.2010 17:41
 
-Racket FTP Server Library v1.0.9
+Racket FTP Server Library v1.0.10
 ----------------------------------------------------------------------
 
 Summary:
@@ -32,9 +32,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (provide ftp-server
          add-ftp-user
-         set-ftp-root-dir
-         set-default-locale-encoding
-         set-log-output-port
+         default-root-dir
+         default-locale-encoding
+         log-output-port
          set-passive-ports)
 
 (struct ftp-user (full-name login pass group home-dirs root-dir))
@@ -57,12 +57,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ;;
 ;; ---------- Global Definitions ----------
 ;;
-(define ftp-default-locale-encoding "UTF-8")
+(define default-locale-encoding (make-parameter "UTF-8"))
 
 (define ftp-run-date (srfi/19:current-date))
 (define ftp-date-zone-offset (srfi/19:date-zone-offset ftp-run-date))
 
-(define ftp-root-dir "ftp-dir")
+(define default-root-dir (make-parameter "ftp-dir"))
 (define ftp-users (make-hash))
 
 (define dead-process (make-custodian))
@@ -72,13 +72,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define current-passive-port passive-ports-from)
 (define passive-listeners #f)
 
-(define ftp-log-output-port (current-output-port))
+(define log-output-port (make-parameter (current-output-port)))
 ;;
 ;; ---------- Main ----------
 ;;
 (define (ftp-server [port 21] [max-allow-wait 50] [host "127.0.0.1"])
   (let ([server-custodian (make-custodian)])
-    (init-ftp-dirs ftp-root-dir)
+    (init-ftp-dirs (default-root-dir))
     (init-passive-listeners server-custodian host)
     (parameterize ([current-custodian server-custodian])
       (letrec ([listener (tcp-listen port max-allow-wait #t host)]
@@ -94,9 +94,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (let-values ([(in out) (tcp-accept listener)])
         (thread (λ ()
                   (let-values ([(server-host client-host) (tcp-addresses in)])
-                    ;(fprintf ftp-log-output-port "[~a] Accept connection!\n" client-host)
+                    ;(fprintf (log-output-port) "[~a] Accept connection!\n" client-host)
                     (accept-client-request in out (connect-shutdown 60 cust client-host) client-host)
-                    ;(fprintf ftp-log-output-port "[~a] Connection close!\n" client-host)
+                    ;(fprintf (log-output-port) "[~a] Connection close!\n" client-host)
                     )
                   (custodian-shutdown-all cust)))))))
 
@@ -110,7 +110,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (sleep 1)
                     (set! tick (sub1 tick))
                     (loop)))
-                ;(fprintf ftp-log-output-port "[~a] Auto connection close!\n" client-host)
+                ;(fprintf (log-output-port) "[~a] Auto connection close!\n" client-host)
                 (custodian-shutdown-all connect-cust)))
       reset)))
 
@@ -120,22 +120,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (flush-output output-port))
 
 (define (eval-client-request input-port output-port reset-timer client-host)
-  (let ([session (ftp-session #f           ; user-id
-                              #f           ; user-logged
-                              client-host  ; client-host
-                              ftp-root-dir ; root-dir
-                              "/"          ; current-dir
-                              'active      ; transfer-mode
-                              'ASCII       ; representation-type
+  (let ([session (ftp-session #f                 ; user-id
+                              #f                 ; user-logged
+                              client-host        ; client-host
+                              (default-root-dir) ; root-dir
+                              "/"                ; current-dir
+                              'active            ; transfer-mode
+                              'ASCII             ; representation-type
                               ; active-data-host-port
                               (ftp-active-host-port (bytes 127 0 0 1) 20)
                               ; passive-host-port
                               (ftp-passive-host-port (bytes 127 0 0 1) 20)
-                              dead-process                ; current-process
-                              #f                          ; rename-path
-                              ftp-default-locale-encoding ; locale-encoding
-                              ; mlst-features
-                              (ftp-mlst-features #t #t #f))])
+                              dead-process                  ; current-process
+                              #f                            ; rename-path
+                              (default-locale-encoding)     ; locale-encoding
+                              (ftp-mlst-features #t #t #f)  ; mlst-features
+                              )])
     (print-crlf/encoding* session output-port "220 Racket FTP Server!")
     (flush-output output-port)
     ;(sleep 1)
@@ -801,7 +801,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (set-ftp-session-locale-encoding! session "UTF-8")
                     (print-crlf/encoding* session output-port "200 UTF8 mode enabled."))
                    ((OFF)
-                    (set-ftp-session-locale-encoding! session ftp-default-locale-encoding)
+                    (set-ftp-session-locale-encoding! session (default-locale-encoding))
                     (print-crlf/encoding* session output-port "200 UTF8 mode disabled."))
                    (else
                     (print-crlf/encoding* session output-port "501 UTF8: Syntax error in parameters or arguments.")))
@@ -995,11 +995,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (flush-output out)
                         (print-crlf/encoding* session msg-out "226 Transfer complete.")
                         (flush-output msg-out))))
-                  ;(displayln  "Process complete!" ftp-log-output-port)
+                  ;(displayln  "Process complete!" (log-output-port))
                   (custodian-shutdown-all cust))))
       (thread (λ ()
                 (sleep 600)
-                ;(displayln "Auto kill working process!" ftp-log-output-port)
+                ;(displayln "Auto kill working process!" (log-output-port))
                 (custodian-shutdown-all cust))))))
 
 ;; Experimental
@@ -1036,11 +1036,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (flush-output out)
                           (print-crlf/encoding* session msg-out "226 Transfer complete.")
                           (flush-output msg-out)))))
-                  ;(displayln "Process complete!" ftp-log-output-port)
+                  ;(displayln "Process complete!" (log-output-port))
                   (custodian-shutdown-all cust))))
       (thread (λ ()
                 (sleep 600)
-                ;(displayln "Auto kill working process!" ftp-log-output-port)
+                ;(displayln "Auto kill working process!" (log-output-port))
                 (custodian-shutdown-all cust))))))
 
 (define (ftp-store-file session new-file-full-path msg-out exists-mode)
@@ -1081,11 +1081,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (flush-output msg-out))))
                     #:mode 'binary
                     #:exists exists-mode))
-                ;(displayln "Process complete!" ftp-log-output-port)
+                ;(displayln "Process complete!" (log-output-port))
                 (custodian-shutdown-all cust)))
       (thread (λ ()
                 (sleep 600)
-                ;(displayln "Auto kill working process!" ftp-log-output-port)
+                ;(displayln "Auto kill working process!" (log-output-port))
                 (custodian-shutdown-all cust))))))
 
 ;; Experimental
@@ -1120,11 +1120,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             (flush-output msg-out)))))
                     #:mode 'binary
                     #:exists exists-mode))
-                ;(displayln "Process complete!" ftp-log-output-port)
+                ;(displayln "Process complete!" (log-output-port))
                 (custodian-shutdown-all cust)))
       (thread (λ ()
                 (sleep 600)
-                ;(displayln "Auto kill working process!" ftp-log-output-port)
+                ;(displayln "Auto kill working process!" (log-output-port))
                 (custodian-shutdown-all cust))))))
 
 (define (byte-host->string byte-host)
@@ -1261,11 +1261,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (date-display-format 'iso-8601)
     (λ (session msg [user-name? #t])
       (if user-name?
-          (fprintf ftp-log-output-port
+          (fprintf (log-output-port)
                    "~a [~a] ~a : ~a\n"
                    (date->string (current-date) #t) (ftp-session-client-host session)
                    (ftp-session-user-id session) msg)
-          (fprintf ftp-log-output-port
+          (fprintf (log-output-port)
                    "~a [~a] ~a\n"
                    (date->string (current-date) #t) (ftp-session-client-host session) msg)))))
 
@@ -1359,7 +1359,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define (kill-current-ftp-process session)
   (custodian-shutdown-all (ftp-session-current-process session)))
 
-(define (add-ftp-user full-name login pass group home-dirs [root-dir ftp-root-dir])
+(define (add-ftp-user full-name login pass group home-dirs [root-dir (default-root-dir)])
   (let ([root-dir (get-params* #rx".+" root-dir)])
     (hash-set! ftp-users login (ftp-user full-name login pass group home-dirs root-dir))
     (init-ftp-dirs root-dir)
@@ -1376,15 +1376,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (drop-right dirs 1)))
                     (ftp-mkdir* (string-append root-dir home-dir) login group))))
               home-dirs)))
-
-(define (set-default-locale-encoding encoding)
-  (set! ftp-default-locale-encoding encoding))
-
-(define (set-ftp-root-dir name)
-  (set! ftp-root-dir name))
-
-(define (set-log-output-port output-port)
-  (set! ftp-log-output-port output-port))
 
 (define (set-passive-ports from to)
   (set! passive-ports-from from)
