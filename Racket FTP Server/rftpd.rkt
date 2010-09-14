@@ -1,6 +1,6 @@
-#| 12.09.2010 17:42
+#| 14.09.2010 13:49
 
-Racket FTP Server v1.0.5
+Racket FTP Server v1.0.6
 ----------------------------------------------------------------------
 
 Summary:
@@ -28,7 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (require (prefix-in ftp: (file "lib-rftpd.rkt")))
 
-(define name&version "Racket FTP Server v1.0.5")
+(define name&version "Racket FTP Server v1.0.6")
 (define copyright "Copyright (c) 2010 Mikhail Mosienko <cnet@land.ru>")
 
 (define server-host "127.0.0.1")
@@ -84,6 +84,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (stop)
            (displayln "Ok" output-port) (flush-output output-port)
            (next (read input-port)))
+          ((eq? cmd '%restart)
+           (flush-output log-out)
+           (stop)
+           (run)
+           (displayln "Ok" output-port) (flush-output output-port)
+           (next (read input-port)))
           (else
            (fprintf output-port "Command '~a' not implemented.\n" cmd) (flush-output output-port)
            (next (read input-port))))))))
@@ -127,7 +133,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          (ftp:set-passive-ports (second param) (third param)))
                         ((default-locale-encoding)
                          (ftp:default-locale-encoding (second param)))
-                        ((ftp-root-dir)
+                        ((default-root-dir)
                          (ftp:default-root-dir (second param)))
                         ((log-file)
                          (when log-out (close-output-port log-out))
