@@ -1,6 +1,6 @@
-#| 12.09.2010 17:45
+#| 14.09.2010 13:49
 
-Racket FTP Server Control Interface v1.0.3
+Racket FTP Server Control Interface v1.0.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -26,7 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #lang racket
 
-(define name&version "Racket FTP Server Control Interface v1.0.3")
+(define name&version "Racket FTP Server Control Interface v1.0.4")
 (define copyright    "Copyright (c) 2010 Mikhail Mosienko <cnet@land.ru>")
 (define help-msg     "Type 'help' or '?' for help.")
 
@@ -40,15 +40,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define shutdown? (make-parameter #f))
 (define run?      (make-parameter #f))
 (define stop?     (make-parameter #f))
+(define restart?  (make-parameter #f))
 
 (printf "~a\n~a\n\n" name&version copyright)
 
 (command-line
  #:program "control"
  #:once-any
- [("-r" "--run") "Run server" (run? #t)]
- [("-s" "--stop") "Stop server" (stop? #t)]
- [("-e" "--exit") "Shutdown server" (shutdown? #t)])
+ [("-r" "--run")     "Run server"      (run? #t)]
+ [("-s" "--stop")    "Stop server"     (stop? #t)]
+ [("-t" "--restart") "Restart server"  (restart? #t)]
+ [("-e" "--exit")    "Shutdown server" (shutdown? #t)])
 
 (let ([cust (make-custodian)])
   (parameterize ([current-custodian cust])
@@ -77,6 +79,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (displayln "%stop" out)
              (flush-output out)
              (displayln (read-line in)))
+            ((restart?)
+             (displayln "%restart" out)
+             (flush-output out)
+             (displayln (read-line in)))
             ((shutdown?)
              (displayln "%exit" out)
              (flush-output out)
@@ -89,9 +95,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (let ([cmd (read)])
                    (case cmd
                      ((help ?)
-                      (displayln "%run   - run server.")
-                      (displayln "%stop  - stop server.")
-                      (displayln "%exit  - shutdown server.")
+                      (displayln "%run     - run server.")
+                      (displayln "%stop    - stop server.")
+                      (displayln "%restart - restart server.")
+                      (displayln "%exit    - shutdown server.")
                       (loop))
                      (else
                       (displayln cmd out)
