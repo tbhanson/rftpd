@@ -1,4 +1,4 @@
-#| 14.09.2010 13:49
+#|
 
 Racket FTP Server Control Interface v1.0.4
 ----------------------------------------------------------------------
@@ -7,7 +7,7 @@ Summary:
 This file is part of Racket FTP Server.
 
 License:
-Copyright (c) 2010 Mikhail Mosienko <cnet@land.ru>
+Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>
 All Rights Reserved
 
 This program is free software: you can redistribute it and/or modify
@@ -27,7 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #lang racket
 
 (define name&version "Racket FTP Server Control Interface v1.0.4")
-(define copyright    "Copyright (c) 2010 Mikhail Mosienko <cnet@land.ru>")
+(define copyright    "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>")
 (define help-msg     "Type 'help' or '?' for help.")
 
 (define config-file      (make-parameter "conf/ftp.config"))

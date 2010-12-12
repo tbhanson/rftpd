@@ -1,13 +1,13 @@
-#| 14.09.2010 13:49
+#|
 
-Racket FTP Server v1.0.6
+Racket FTP Server v1.0.7
 ----------------------------------------------------------------------
 
 Summary:
 This file is part of Racket FTP Server.
 
 License:
-Copyright (c) 2010 Mikhail Mosienko <cnet@land.ru>
+Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>
 All Rights Reserved
 
 This program is free software: you can redistribute it and/or modify
@@ -26,10 +26,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #lang racket
 
-(require (prefix-in ftp: (file "lib-rftpd.rkt")))
+(require (prefix-in ftp: (file "lib-rftpd.rkt"))
+         racket/class)
 
-(define name&version "Racket FTP Server v1.0.6")
-(define copyright "Copyright (c) 2010 Mikhail Mosienko <cnet@land.ru>")
+(define name&version "Racket FTP Server v1.0.7")
+(define copyright "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>")
 
 (define server-host "127.0.0.1")
 (define server-port 21)
@@ -42,6 +43,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define main-server-custodian #f)
 (define control-custodian #f)
 (define log-out #f)
+
+(define server (new ftp:ftp-server%))
 
 (define (server-control [host "127.0.0.1"] [port 40600] [max-allow-wait 5])
   (let ([cust (make-custodian)])
@@ -95,7 +98,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (next (read input-port))))))))
 
 (define (run)
-  (set! main-server-custodian (ftp:ftp-server server-port server-max-allow-wait server-host))
+  (set! main-server-custodian (send server run-server server-port server-max-allow-wait server-host))
   (displayln "Server running!"))
 
 (define (stop)
@@ -130,7 +133,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         ((max-allow-wait)
                          (set! server-max-allow-wait (second param)))
                         ((passive-ports)
-                         (ftp:set-passive-ports (second param) (third param)))
+                         (send server set-passive-ports (second param) (third param)))
                         ((default-locale-encoding)
                          (ftp:default-locale-encoding (second param)))
                         ((default-root-dir)
@@ -152,8 +155,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (let ([conf (read in)])
         (when (eq? (car conf) 'ftp-server-users)
           (for-each (λ (user)
-                      (ftp:add-ftp-user (car user) (second user) (third user) (fourth user)
-                                        (fifth user) (sixth user)))
+                      (send server add-ftp-user 
+                            (car user) (second user) (third user) (fourth user) (fifth user) (sixth user)))
                     (cdr conf)))))))
 
 (start)
