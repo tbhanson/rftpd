@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.0.11
+Racket FTP Server Library v1.0.12
 ----------------------------------------------------------------------
 
 Summary:
@@ -66,20 +66,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define ftp-utils%
   (class object%
-
+    
     (define/public (init-ftp-dirs root-dir)
       (unless (ftp-dir-exists? root-dir)
         (ftp-mkdir* root-dir)))
-
+    
     (define/public (init-passive-listeners server-custodian host)
       (parameterize ([current-custodian server-custodian])
         (set! passive-listeners
               (build-vector (- (add1 passive-ports-to) passive-ports-from)
                             (λ (n) (tcp-listen (passive-ports-from . + . n) 1 #t host))))))
-
+    
     (define/public (get-params req)
       (get-params* #rx"[^A-z]+.*" req))
-
+    
     (define/public (get-params* delseq req)
       (let ([p (regexp-match delseq req)])
         (if p
@@ -89,7 +89,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (if p (car p) #f))
                   #f))
             #f)))
-
+    
     (define/public (ftp-file-or-dir-full-info sys-file)
       (call-with-input-file sys-file
         (λ (in)
@@ -97,23 +97,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (read-line in) ; owner
                   (read-line in) ; group
                   ))))
-
+    
     (define/public (ftp-file-or-dir-sysbytes sys-file)
       (call-with-input-file sys-file
         (λ (in)
           (integer-bytes->integer (read-bytes 2 in) #f))))
-
+    
     (define/public (ftp-file-or-dir-sysbytes/owner sys-file)
       (call-with-input-file sys-file
         (λ (in)
           (vector (integer-bytes->integer (read-bytes 2 in) #f)
                   (read-line in)))))
-
+    
     (define/public (ftp-mkdir* spath [owner "racket"][group "racket"][permissions #b111110100])
       (make-directory spath)
       (ftp-mksys-file (string-append spath "/.ftp-racket-directory")
                       owner group permissions))
-
+    
     (define/public (ftp-mksys-file sys-file [owner "racket"][group "racket"][permissions #b111110100])
       (call-with-output-file sys-file
         (λ (out)
@@ -121,20 +121,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           [display owner out][newline out]
           [display group out][newline out])
         #:exists 'truncate))
-
+    
     (define/public (ftp-dir-exists? spath)
       (and (directory-exists? spath)
            (file-exists? (string-append spath "/.ftp-racket-directory"))))
-
+    
     (define/public (ftp-file-exists? spath)
       (and (file-exists? spath)
            (file-exists? (string-append spath ".ftp-racket-file"))))
-
+    
     (define/public (ftp-file-name-safe? spath)
       (not (and (filename-extension spath)
                 (or (bytes=? (filename-extension spath) #"ftp-racket-file")
                     (bytes=? (filename-extension spath) #"ftp-racket-directory")))))
-
+    
     (define/public (simplify-ftp-path ftp-path [drop-tail-elem 0])
       (with-handlers ([any/c (λ (e) "/")])
         (let ([path-lst (drop-right (filter (λ (s) (not (string=? s "")))
@@ -143,7 +143,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (if (null? path-lst)
               "/"
               (foldr (λ (a b) (string-append "/" a b)) "" path-lst)))))
-
+    
     (define/public (ftp-allow-read? full-ftp-sys-file-spath user)
       (let ([info (ftp-file-or-dir-full-info full-ftp-sys-file-spath)])
         (cond
@@ -153,7 +153,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (bitwise-bit-set? (vector-ref info 0) 5))
           (else
            (bitwise-bit-set? (vector-ref info 0) 2)))))
-
+    
     (define/public (ftp-allow-write? full-ftp-sys-file-spath user)
       (let ([info (ftp-file-or-dir-full-info full-ftp-sys-file-spath)])
         (cond
@@ -163,7 +163,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (bitwise-bit-set? (vector-ref info 0) 4))
           (else
            (bitwise-bit-set? (vector-ref info 0) 1)))))
-
+    
     (define/public (ftp-allow-delete-move? full-ftp-sys-file-spath user)
       (call-with-input-file full-ftp-sys-file-spath
         (λ (in)
@@ -171,47 +171,47 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [owner (read-line in)])
             (and (string=? owner (ftp-user-login user))
                  (bitwise-bit-set? sysbytes 7))))))
-
+    
     (define/public (ftp-dir-allow-read? spath user)
       (ftp-allow-read? (string-append spath "/.ftp-racket-directory") user))
-
+    
     (define/public (ftp-dir-allow-write? spath user)
       (ftp-allow-write? (string-append spath "/.ftp-racket-directory") user))
-
+    
     (define/public (ftp-dir-allow-delete-move? spath user)
       (ftp-allow-delete-move? (string-append spath "/.ftp-racket-directory") user))
-
+    
     (define/public (ftp-file-allow-read? spath user)
       (ftp-allow-read? (string-append spath ".ftp-racket-file") user))
-
+    
     (define/public (ftp-file-allow-write? spath user)
       (ftp-allow-write? (string-append spath ".ftp-racket-file") user))
-
+    
     (define/public (ftp-file-allow-delete-move? spath user)
       (ftp-allow-delete-move? (string-append spath ".ftp-racket-file") user))
-
+    
     ;(define/public (print-crlf/encoding encoding out text)
     ;  (print/encoding encoding out text)
     ;  (write-bytes #"\r\n" out))
-
+    
     (define/public (print/encoding encoding out text)
       (let ([conv (bytes-open-converter "UTF-8" encoding)])
         (let-values ([(bstr len result) (bytes-convert conv (string->bytes/utf-8 text))])
           (bytes-close-converter conv)
           (write-bytes bstr out))))
-
+    
     (define/public (request-bytes->string/encoding encoding bstr)
       (let ([conv (bytes-open-converter encoding "UTF-8")])
         (let-values ([(bstr len result) (bytes-convert conv bstr)])
           (bytes-close-converter conv)
           (bytes->string/utf-8 bstr))))
-
+    
     (define/public (list-string->bytes/encoding encoding str)
       (let ([conv (bytes-open-converter "UTF-8" encoding)])
         (let-values ([(bstr len result) (bytes-convert conv (string->bytes/utf-8 str))])
           (bytes-close-converter conv)
           bstr)))
-
+    
     (super-new)))
 
 (define ftp-client%
@@ -255,10 +255,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define rename-path #f)
     (define locale-encoding (default-locale-encoding))
     (define mlst-features (ftp-mlst-features #t #t #f))
-
+    
     (define print/locale-encoding #f)
     (define request-bytes->string/locale-encoding #f)
     (define list-string->bytes/locale-encoding #f)
+    (define cmd-voc #f)
     ;;
     ;; ---------- Public Methods ----------
     ;;
@@ -270,89 +271,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (unless (eof-object? request)
           (when request
             ;(printf "[~a] ~a\n" client-host request)
-            (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" request))))]
+            (let ([cmd (string-upcase (car (regexp-match #rx"[^ ]+" request)))]
                   [params (get-params request)])
-              (case cmd
-                ((USER)
-                 (USER-COMMAND params))
-                ((PASS)
-                 (PASS-COMMAND params))
-                ((QUIT)
-                 (print-crlf/encoding* "221 Goodbye.")
-                 (flush-output output-port)
-                 (raise 0))
-                (else
-                 (if user-logged
-                     (case cmd
-                       ((PWD XPWD)
-                        (print-crlf/encoding* (format "257 ~s is current directory." current-dir)))
-                       ((PORT)
-                        (PORT-COMMAND params))
-                       ((CWD)
-                        (CWD-COMMAND params))
-                       ((CDUP)
-                        (set! current-dir (simplify-ftp-path current-dir 1))
-                        (print-crlf/encoding* "250 CDUP command successful."))
-                       ((NLST)
-                        (DIR-LIST #t params))
-                       ((LIST)
-                        (DIR-LIST #f params))
-                       ((MLST)
-                        (MLST-COMMAND params))
-                       ((MLSD)
-                        (MLSD-COMMAND params))
-                       ((TYPE)
-                        (TYPE-COMMAND params))
-                       ((ABOR)
-                        (kill-current-ftp-process)
-                        (print-crlf/encoding* "226 Abort successful."))
-                       ((PASV)
-                        (PASV-COMMAND params))
-                       ((RETR)
-                        (RETR-COMMAND params))
-                       ((MKD)
-                        (MKD-COMMAND params))
-                       ((RMD)
-                        (RMD-COMMAND params))
-                       ((STOR)
-                        (STORE-FILE params))
-                       ((APPE)
-                        (STORE-FILE params 'append))
-                       ((DELE)
-                        (DELE-COMMAND params))
-                       ((RNFR)
-                        (RNFR-COMMAND params))
-                       ((RNTO)
-                        (RNTO-COMMAND params))
-                       ((STOU)
-                        (STOU-FILE params))
-                       ((MDTM)
-                        (MDTM-COMMAND params))
-                       ((SIZE)
-                        (SIZE-COMMAND params))
-                       ((NOOP)
-                        (print-crlf/encoding* "200 NOOP"))
-                       ((SITE)
-                        (SITE-COMMAND params))
-                       ((SYST)
-                        (print-crlf/encoding* "215 UNIX (Unix-like)"))
-                       ((OPTS)
-                        (OPTS-COMMAND params))
-                       ((FEAT)
-                        (print-crlf/encoding* "211-Extensions supported:")
-                        (print-crlf/encoding* " UTF8")
-                        (print-crlf/encoding* " MLST size*;modify*;perm")
-                        (print-crlf/encoding* " MLSD")
-                        (print-crlf/encoding* " SIZE")
-                        (print-crlf/encoding* " MDTM")
-                        (print-crlf/encoding* "211 End"))
-                       ((MODE)
-                        (MODE-COMMAND params))
-                       ((STRU)
-                        (STRU-COMMAND params))
-                       (else (print-crlf/encoding*
-                              (format "502 ~a not implemented." (symbol->string cmd)))))
-                     (print-crlf/encoding* "530 Please login with USER and PASS.")))))
+              (if user-logged
+                  (let ([fun (hash-ref cmd-voc cmd #f)])
+                    (if fun
+                        (fun params)
+                        (print-crlf/encoding* (format "502 ~a not implemented." cmd))))
+                  (case (string->symbol cmd)
+                    ((USER) (USER-COMMAND params))
+                    ((PASS) (PASS-COMMAND params))
+                    ((QUIT) (QUIT-COMMAND params))
+                    (else (print-crlf/encoding* "530 Please login with USER and PASS.")))))
             (flush-output output-port))
           (reset-timer)
           (sleep .005)
@@ -361,7 +291,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Private Methods ----------
     ;;
     ;; Возвращает идентификатор(имя) пользователя
-    (define/private (USER-COMMAND params)
+    (define (USER-COMMAND params)
       (if params
           (let ([name params])
             (if (and (hash-ref ftp-users name #f)
@@ -373,9 +303,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
             (set! user-id #f)))
       (set! user-logged #f))
-
+    
     ;; Проверяет пороль пользователя
-    (define/private (PASS-COMMAND params)
+    (define (PASS-COMMAND params)
       (let ([correct?
              (cond
                ((string? user-id)
@@ -409,9 +339,58 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (set! user-logged correct?)
         (when correct?
           (set! root-dir (ftp-user-root-dir (hash-ref ftp-users user-id))))))
-
+    
+    (define (QUIT-COMMAND params)
+      (if params
+          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (begin
+            (print-crlf/encoding* "221 Goodbye.")
+            (flush-output output-port)
+            (raise 0))))
+    
+    (define (PWD-COMMAND params)
+      (if params
+          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (print-crlf/encoding* (format "257 ~s is current directory." current-dir))))
+    
+    (define (CDUP-COMMAND params)
+      (if params
+          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (begin
+            (set! current-dir (simplify-ftp-path current-dir 1))
+            (print-crlf/encoding* "250 CDUP command successful."))))
+    
+    (define (ABOR-COMMAND params)
+      (if params
+          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (begin
+            (kill-current-ftp-process)
+            (print-crlf/encoding* "226 Abort successful."))))
+    
+    (define (NOOP-COMMAND params)
+      (if params
+          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (print-crlf/encoding* "200 NOOP")))
+    
+    (define (SYST-COMMAND params)
+      (if params
+          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (print-crlf/encoding* "215 UNIX (Unix-like)")))
+    
+    (define (FEAT-COMMAND params)
+      (if params
+          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (begin
+            (print-crlf/encoding* "211-Extensions supported:")
+            (print-crlf/encoding* " UTF8")
+            (print-crlf/encoding* " MLST size*;modify*;perm")
+            (print-crlf/encoding* " MLSD")
+            (print-crlf/encoding* " SIZE")
+            (print-crlf/encoding* " MDTM")
+            (print-crlf/encoding* "211 End"))))
+    
     ;; Инициирует активный режим.
-    (define/private (PORT-COMMAND params)
+    (define (PORT-COMMAND params)
       (with-handlers ([any/c (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
         (unless (regexp-match #rx"[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+" params)
           (raise 'error))
@@ -423,16 +402,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (set! transfer-mode 'active)
           (set! active-host-port (ftp-active-host-port host port))
           (print-crlf/encoding* "200 Port command successful."))))
-
+    
     ;; Посылает клиенту список файлов директории.
-    (define/private (DIR-LIST short? params)
+    (define (DIR-LIST short? params)
       (local
         [(define (month->string m)
            (case m
              [(1) "Jan"][(2)  "Feb"][(3)  "Mar"][(4)  "Apr"]
              [(5) "May"][(6)  "Jun"][(7)  "Jul"][(8)  "Aug"]
              [(9) "Sep"][(10) "Oct"][(11) "Nov"][(12) "Dec"]))
-
+         
          (define (date-time->string dte)
            (string-append (number->string (date-day dte)) " " (month->string (date-month dte)) " "
                           (if ((date-year (current-date)). = .(date-year dte))
@@ -442,7 +421,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                       (if (< (date-minute dte) 10) "0" "")
                                       (date-minute dte))
                               (number->string (date-year dte)))))
-
+         
          (define (read-ftp-sys-info ftp-path full-ftp-sys-file-spath)
            (let* ([info (ftp-file-or-dir-full-info full-ftp-sys-file-spath)]
                   [sysbytes (vector-ref info 0)])
@@ -456,15 +435,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (if (bitwise-bit-set? sysbytes 1) #\w #\-)
                         (if (bitwise-bit-set? sysbytes 0) #\x #\-))
                ,(vector-ref info 1) ,(vector-ref info 2) ,ftp-path)))
-
+         
          (define (read-ftp-dir-sys-info ftp-path spath)
            (let ([info (read-ftp-sys-info ftp-path (string-append spath "/.ftp-racket-directory"))])
              (string-append "d" (car info) (second info) (third info) " 2 " (fourth info) " " (fifth info))))
-
+         
          (define (read-ftp-file-sys-info ftp-path spath)
            (let ([info (read-ftp-sys-info ftp-path (string-append spath ".ftp-racket-file"))])
              (string-append "-" (car info) (second info) (third info) " 1 " (fourth info) " " (fifth info))))
-
+         
          (define (dlst ftp-dir-name)
            (let* ([full-dir-name (string-append root-dir ftp-dir-name)]
                   [dirlist (string-append*
@@ -473,9 +452,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                           [ftp-full-spath (string-append (simplify-ftp-path ftp-dir-name) "/" spath)]
                                           [full-spath (string-append full-dir-name "/" spath)])
                                      (if (or (and (ftp-file-exists? full-spath)
-                                                  (ftp-file-allow-read? full-spath (current-ftp-user)))
+                                                  (ftp-file-allow-read? full-spath current-ftp-user))
                                              (and (ftp-dir-exists? full-spath)
-                                                  (ftp-dir-allow-read? full-spath (current-ftp-user))))
+                                                  (ftp-dir-allow-read? full-spath current-ftp-user)))
                                          (if short?
                                              (string-append spath "\n")
                                              (let ([d (seconds->date (file-or-directory-modify-seconds full-spath))])
@@ -491,7 +470,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (ftp-data-transfer (case representation-type
                                   ((ASCII) dirlist)
                                   ((Image) (list-string->bytes/locale-encoding dirlist))))))]
-
+        
         (let ([dir (if (and params (regexp-match #rx"[^-A-z]+.*" params))
                        (regexp-match #rx"[^ ]+.*" (car (regexp-match #rx"[^-A-z]+.*" params)))
                        #f)])
@@ -506,31 +485,31 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (dlst (string-append current-dir "/" dir)))
             (else
              (print-crlf/encoding* "550 Directory not found."))))))
-
+    
     ;; Отправляет клиенту копию файла.
-    (define/private (RETR-COMMAND params)
+    (define (RETR-COMMAND params)
       (local [(define (fcopy full-path-file)
                 (ftp-data-transfer full-path-file #t))]
-
+        
         (cond
           ((not params)
            (print-crlf/encoding* "501 Syntax error in parameters or arguments."))
           ((and (memq (string-ref params 0) '(#\/ #\\))
                 (ftp-file-exists? (string-append root-dir params)))
            (if (ftp-file-allow-read? (string-append root-dir params)
-                                     (current-ftp-user))
+                                     current-ftp-user)
                (fcopy (string-append root-dir params))
                (print-crlf/encoding* "550 Permission denied.")))
           ((ftp-file-exists? (string-append root-dir current-dir "/" params))
            (if (ftp-file-allow-read? (string-append root-dir current-dir "/" params)
-                                     (current-ftp-user))
+                                     current-ftp-user)
                (fcopy (string-append root-dir current-dir "/" params))
                (print-crlf/encoding* "550 Permission denied.")))
           (else
            (print-crlf/encoding* "550 Directory not found.")))))
-
+    
     ;; Устанавливает тип передачи файла (реализован только A(текстовый) и I(бинарный)).
-    (define/private (TYPE-COMMAND params)
+    (define (TYPE-COMMAND params)
       (if params
           (case (string->symbol (string-upcase (car (regexp-split #rx" +" params))))
             ((A)
@@ -544,9 +523,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (else
              (print-crlf/encoding* "501 Unsupported type. Supported types are I and A.")))
           (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
-
+    
     ;; Experimental
-    (define/private (MODE-COMMAND params)
+    (define (MODE-COMMAND params)
       (if params
           (case (string->symbol (string-upcase params))
             ((S)
@@ -556,9 +535,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (else
              (print-crlf/encoding* "501 Unknown MODE type.")))
           (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
-
+    
     ;; Experimental
-    (define/private (STRU-COMMAND params)
+    (define (STRU-COMMAND params)
       (if params
           (case (string->symbol (string-upcase params))
             ((F)
@@ -568,9 +547,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (else
              (print-crlf/encoding* "501 Unknown FILE STRUCTURE type.")))
           (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
-
+    
     ;; Изменяет рабочую директорию (current-dir).
-    (define/private (CWD-COMMAND params)
+    (define (CWD-COMMAND params)
       (cond
         ((not params)
          (print-crlf/encoding* "501 Syntax error in parameters or arguments."))
@@ -583,9 +562,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (print-crlf/encoding* "250 CWD command successful."))
         (else
          (print-crlf/encoding* "550 Directory not found."))))
-
+    
     ;; Создает каталог.
-    (define/private (MKD-COMMAND params)
+    (define (MKD-COMMAND params)
       (local [(define (mkd ftp-parent-path dir-name user)
                 (let* ([full-parent-path (string-append root-dir ftp-parent-path)]
                        [sp (string-append full-parent-path "/" dir-name)])
@@ -598,7 +577,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             (print-log-event (format "Make directory ~a" fp))
                             (print-crlf/encoding* (format "257 ~s - Directory successfully created." fp))))
                       (print-crlf/encoding* "550 Can't create directory. Permission denied!"))))]
-
+        
         (if params
             (let* ([path (if (memq (string-ref params (sub1 (string-length params))) '(#\/ #\\))
                              (car (regexp-match #rx".*[^/\\\\]+" params))
@@ -609,7 +588,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    [parent-path (if (and dir-name (path-only path))
                                     (path->string (path-only path))
                                     #f)]
-                   [user (current-ftp-user)])
+                   [user current-ftp-user])
               (cond
                 ((not dir-name)
                  (print-crlf/encoding* "550 Can't create directory."))
@@ -627,15 +606,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (else
                  (print-crlf/encoding* "550 Can't create directory."))))
             (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
-
+    
     ;; Удаляет каталог.
-    (define/private (RMD-COMMAND params)
+    (define (RMD-COMMAND params)
       (local
         [(define (rmd ftp-path)
            (let ([spath (string-append root-dir ftp-path)])
              (if ((file-or-directory-identity spath). = .(file-or-directory-identity root-dir))
                  (print-crlf/encoding* "550 Directory not found.")
-                 (if (ftp-dir-allow-delete-move? spath (current-ftp-user))
+                 (if (ftp-dir-allow-delete-move? spath current-ftp-user)
                      (let ([lst (directory-list spath)])
                        (if (> (length lst) 1)
                            (print-crlf/encoding* "550 Can't delete directory. Directory not empty!")
@@ -646,7 +625,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                              (print-log-event (format "Remove a directory ~a" (simplify-ftp-path ftp-path)))
                              (print-crlf/encoding* "250 RMD command successful."))))
                      (print-crlf/encoding* "550 Can't delete directory. Permission denied!")))))]
-
+        
         (cond
           ((and (memq (string-ref params 0) '(#\/ #\\))
                 (ftp-dir-exists? (string-append root-dir params)))
@@ -655,15 +634,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (rmd (string-append current-dir "/" params)))
           (else
            (print-crlf/encoding* "550 Directory not found.")))))
-
+    
     ;; Сохраняет файл.
-    (define/private (STORE-FILE params [exists-mode 'truncate])
+    (define (STORE-FILE params [exists-mode 'truncate])
       (local [(define (fstore full-path-file user)
                 (ftp-store-file full-path-file exists-mode)
                 (unless (file-exists? (string-append full-path-file ".ftp-racket-file"))
                   (ftp-mksys-file (string-append full-path-file ".ftp-racket-file")
                                   (ftp-user-login user) (ftp-user-group user))))
-
+              
               (define (stor full-parent-path file-name user)
                 (let ([real-path (string-append full-parent-path "/" file-name)])
                   (if (and (ftp-dir-allow-write? full-parent-path user)
@@ -673,7 +652,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                #t))
                       (fstore real-path user)
                       (print-crlf/encoding* "550 Can't store file. Permission denied!"))))]
-
+        
         (if params
             (let* ([file-name (if (file-name-from-path params)
                                   (path->string (file-name-from-path params))
@@ -681,7 +660,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    [parent-path (if (and file-name (path-only params))
                                     (path->string (path-only params))
                                     #f)]
-                   [user (current-ftp-user)])
+                   [user current-ftp-user])
               (cond
                 ((not file-name)
                  (print-crlf/encoding* "550 Can't store file."))
@@ -695,10 +674,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (else
                  (print-crlf/encoding* "550 Can't store file."))))
             (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
-
+    
     ;; Experimental
-    (define/private (STOU-FILE params)
-      (let ([user (current-ftp-user)])
+    (define (STOU-FILE params)
+      (let ([user current-ftp-user])
         (cond
           (params
            (print-crlf/encoding* "501 Syntax error in parameters or arguments."))
@@ -715,13 +694,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                              (ftp-user-login user) (ftp-user-group user))))
           (else
            (print-crlf/encoding* "550 Can't store file. Permission denied!")))))
-
+    
     ;; Удаляет файл.
-    (define/private (DELE-COMMAND params)
+    (define (DELE-COMMAND params)
       (local
         [(define (dele ftp-path)
            (let ([spath (string-append root-dir ftp-path)])
-             (if (ftp-file-allow-delete-move? spath (current-ftp-user))
+             (if (ftp-file-allow-delete-move? spath current-ftp-user)
                  (with-handlers ([exn:fail:filesystem? (λ (e)
                                                          (print-crlf/encoding* "550 System error."))])
                    (delete-file (string-append spath ".ftp-racket-file"))
@@ -729,7 +708,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    (print-log-event (format "Delete a file ~a" (simplify-ftp-path ftp-path)))
                    (print-crlf/encoding* "250 DELE command successful."))
                  (print-crlf/encoding* "550 Can't delete file. Permission denied!"))))]
-
+        
         (cond
           ((and (memq (string-ref params 0) '(#\/ #\\))
                 (ftp-file-exists? (string-append root-dir params)))
@@ -738,9 +717,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (dele (string-append current-dir "/" params)))
           (else
            (print-crlf/encoding* "550 File not found.")))))
-
+    
     ;; Эмулирует Unix команды.
-    (define/private (SITE-COMMAND params)
+    (define (SITE-COMMAND params)
       (local
         [(define (chmod permis path)
            (let* ([permis (if ((length permis). = . 4)
@@ -756,7 +735,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                    (ch->num (third cl))))]
                   [fchmod (λ (full-path target)
                             (let ([owner (vector-ref (ftp-file-or-dir-sysbytes/owner (string-append full-path target)) 1)]
-                                  [user (current-ftp-user)])
+                                  [user current-ftp-user])
                               (if (string=? owner (ftp-user-login user))
                                   (begin
                                     (ftp-mksys-file (string-append full-path target)
@@ -781,7 +760,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                        current-dir "/" path) "/.ftp-racket-directory"))
                (else
                 (print-crlf/encoding* "550 File or directory not found.")))))]
-
+        
         (if params
             (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
               (case cmd
@@ -796,9 +775,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        (print-crlf/encoding* "501 CHMOD: Syntax error in parameters or arguments."))))
                 (else (print-crlf/encoding* "504 Command not implemented for that parameter."))))
             (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
-
+    
     ;; Experimental
-    (define/private (MDTM-COMMAND params)
+    (define (MDTM-COMMAND params)
       (if params
           (let ([mdtm (λ (path)
                         (if (or (ftp-file-exists? path)
@@ -811,9 +790,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (mdtm (string-append root-dir params))
                 (mdtm (string-append root-dir current-dir "/" params))))
           (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
-
+    
     ;; Experimental
-    (define/private (SIZE-COMMAND params)
+    (define (SIZE-COMMAND params)
       (if params
           (let ([size (λ (path)
                         (if (ftp-file-exists? path)
@@ -823,9 +802,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (size (string-append root-dir params))
                 (size (string-append root-dir current-dir "/" params))))
           (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
-
+    
     ;; Experimental
-    (define/private (MLST-COMMAND params)
+    (define (MLST-COMMAND params)
       (local [(define (mlst session ftp-path)
                 (print-crlf/encoding* "250- Listing")
                 (print-crlf/encoding* (string-append " " (mlst-info session ftp-path)))
@@ -858,9 +837,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (mlst (string-append current-dir "/" params))))
                (else
                 (print-crlf/encoding* "550 File or directory not found."))))))))
-
+    
     ;; Experimental
-    (define/private (MLSD-COMMAND params)
+    (define (MLSD-COMMAND params)
       (local [(define (mlsd ftp-path)
                 (let* ([path (string-append root-dir ftp-path)]
                        [dirlist (string-append*
@@ -868,9 +847,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                         (let* ([spath (path->string p)]
                                                [full-spath (string-append path "/" spath)])
                                           (if (or (and (ftp-file-exists? full-spath)
-                                                       (ftp-file-allow-read? full-spath (current-ftp-user)))
+                                                       (ftp-file-allow-read? full-spath current-ftp-user))
                                                   (and (ftp-dir-exists? full-spath)
-                                                       (ftp-dir-allow-read? full-spath (current-ftp-user))))
+                                                       (ftp-dir-allow-read? full-spath current-ftp-user)))
                                               (string-append (mlst-info (string-append ftp-path "/" spath) #f)
                                                              "\n")
                                               "")))
@@ -891,10 +870,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (if (ftp-dir-exists? path)
                  (mlsd (string-append current-dir "/" params))
                  (print-crlf/encoding* "550 Directory not found.")))))))
-
-
+    
+    
     ;; Experimental
-    (define/private (OPTS-COMMAND params)
+    (define (OPTS-COMMAND params)
       (if params
           (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
             (case cmd
@@ -932,9 +911,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (print-crlf/encoding* "501 MLST: Syntax error in parameters or arguments."))))
               (else (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
           (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
-
+    
     ;; Подготавливает к переименованию файл или каталог.
-    (define/private (RNFR-COMMAND params)
+    (define (RNFR-COMMAND params)
       (if params
           (let ([path1 (string-append root-dir params)]
                 [path2 (string-append root-dir current-dir "/" params)])
@@ -942,13 +921,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ((memq (string-ref params 0) '(#\/ #\\))
                (cond
                  ((ftp-file-exists? path1)
-                  (if (ftp-file-allow-delete-move? path1 (current-ftp-user))
+                  (if (ftp-file-allow-delete-move? path1 current-ftp-user)
                       (begin
                         (set! rename-path path1)
                         (print-crlf/encoding* "350 File or directory exists, ready for destination name."))
                       (print-crlf/encoding* "550 Permission denied!")))
                  ((ftp-dir-exists? path1)
-                  (if (ftp-dir-allow-delete-move? path1 (current-ftp-user))
+                  (if (ftp-dir-allow-delete-move? path1 current-ftp-user)
                       (begin
                         (set! rename-path path1)
                         (print-crlf/encoding* "350 File or directory exists, ready for destination name."))
@@ -956,13 +935,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (else
                   (print-crlf/encoding* "550 File or directory not found."))))
               ((ftp-file-exists? path2)
-               (if (ftp-file-allow-delete-move? path2 (current-ftp-user))
+               (if (ftp-file-allow-delete-move? path2 current-ftp-user)
                    (begin
                      (set! rename-path path2)
                      (print-crlf/encoding* "350 File or directory exists, ready for destination name."))
                    (print-crlf/encoding* "550 Permission denied!")))
               ((ftp-dir-exists? path2)
-               (if (ftp-dir-allow-delete-move? path2 (current-ftp-user))
+               (if (ftp-dir-allow-delete-move? path2 current-ftp-user)
                    (begin
                      (set! rename-path path2)
                      (print-crlf/encoding* "350 File or directory exists, ready for destination name."))
@@ -970,9 +949,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (else
                (print-crlf/encoding* "550 File or directory not found."))))
           (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
-
+    
     ;; Переименовывает подготавленный файл или каталог.
-    (define/private (RNTO-COMMAND params)
+    (define (RNTO-COMMAND params)
       (local [(define (move file? old-path full-parent-path name user)
                 (let ([new-path (string-append full-parent-path "/" name)])
                   (if (ftp-dir-allow-write? full-parent-path user)
@@ -992,7 +971,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                      (real-path->ftp-path new-path)))
                             (print-crlf/encoding* "250 Rename successful.")))
                       (print-crlf/encoding* "550 Can't rename file or directory. Permission denied!"))))]
-
+        
         (if params
             (if rename-path
                 (let* ([old-path rename-path]
@@ -1007,7 +986,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [parent-path (if (and name (path-only path))
                                         (path->string (path-only path))
                                         #f)]
-                       [user (current-ftp-user)]
+                       [user current-ftp-user]
                        [curr-dir current-dir])
                   (cond
                     ((or (not name)
@@ -1030,9 +1009,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (set! rename-path #f))
                 (print-crlf/encoding* "503 Bad sequence of commands."))
             (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
-
+    
     ;; Инициирует пассивный режим.
-    (define/private (PASV-COMMAND params)
+    (define (PASV-COMMAND params)
       (if params
           (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
           (let* ([host-port passive-host-port]
@@ -1047,16 +1026,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (set! current-passive-port (if (>= current-passive-port passive-ports-to)
                                            passive-ports-from
                                            (add1 current-passive-port))))))
-
-    (define/private (ftp-data-transfer data [file? #f])
+    
+    (define (ftp-data-transfer data [file? #f])
       (case transfer-mode
         ((passive)
          (passive-data-transfer data file?))
         ((active)
          (active-data-transfer data file?))))
-
+    
     ;; Experimental
-    (define/private (active-data-transfer data file?)
+    (define (active-data-transfer data file?)
       (let ([host (ftp-active-host-port-host active-host-port)]
             [port (ftp-active-host-port-port active-host-port)]
             [cust (make-custodian)])
@@ -1091,9 +1070,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (sleep 600)
                     ;(displayln "Auto kill working process!" (log-output-port))
                     (custodian-shutdown-all cust))))))
-
+    
     ;; Experimental
-    (define/private (passive-data-transfer data file?)
+    (define (passive-data-transfer data file?)
       (let ([host (ftp-passive-host-port-host passive-host-port)]
             [port (ftp-passive-host-port-port passive-host-port)]
             [cust (make-custodian)])
@@ -1129,16 +1108,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (sleep 600)
                     ;(displayln "Auto kill working process!" (log-output-port))
                     (custodian-shutdown-all cust))))))
-
-    (define/private (ftp-store-file new-file-full-path exists-mode)
+    
+    (define (ftp-store-file new-file-full-path exists-mode)
       (case transfer-mode
         ((passive)
          (passive-store-file new-file-full-path exists-mode))
         ((active)
          (active-store-file new-file-full-path exists-mode))))
-
+    
     ;; Experimental
-    (define/private (active-store-file new-file-full-path exists-mode)
+    (define (active-store-file new-file-full-path exists-mode)
       (let ([host (ftp-active-host-port-host active-host-port)]
             [port (ftp-active-host-port-port active-host-port)]
             [cust (make-custodian)])
@@ -1173,9 +1152,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (sleep 600)
                     ;(displayln "Auto kill working process!" (log-output-port))
                     (custodian-shutdown-all cust))))))
-
+    
     ;; Experimental
-    (define/private (passive-store-file new-file-full-path exists-mode)
+    (define (passive-store-file new-file-full-path exists-mode)
       (let ([host (ftp-passive-host-port-host passive-host-port)]
             [port (ftp-passive-host-port-port passive-host-port)]
             [cust (make-custodian)])
@@ -1211,21 +1190,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (sleep 600)
                     ;(displayln "Auto kill working process!" (log-output-port))
                     (custodian-shutdown-all cust))))))
-
-    (define/private (current-ftp-user)
-      (hash-ref ftp-users user-id))
-
-    (define/private (kill-current-ftp-process)
-      (custodian-shutdown-all current-process))
-
-    (define/private (get-passive-listener port)
+    
+    (define-syntax (current-ftp-user stx)
+      #'(hash-ref ftp-users user-id))
+    
+    (define-syntax (kill-current-ftp-process stx)
+      #'(custodian-shutdown-all current-process))
+    
+    (define (get-passive-listener port)
       (vector-ref passive-listeners (- port passive-ports-from)))
-
-    (define/private (byte-host->string byte-host)
+    
+    (define (byte-host->string byte-host)
       (string-join (map number->string (bytes->list byte-host))
                    "."))
-
-    (define/private (read-request input-port)
+    
+    (define (read-request input-port)
       (if (byte-ready? input-port)
           (let ([line (read-bytes-line input-port)])
             (if (eof-object? line)
@@ -1233,11 +1212,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (let ([s (request-bytes->string/locale-encoding line)])
                   (substring s 0 (sub1 (string-length s))))))
           #f))
-
-    (define/private (real-path->ftp-path real-path [drop-tail-elem 0])
+    
+    (define (real-path->ftp-path real-path [drop-tail-elem 0])
       (simplify-ftp-path (substring real-path (string-length root-dir)) drop-tail-elem))
-
-    (define/private (release-encoding-proc)
+    
+    (define (release-encoding-proc)
       (if (string=? locale-encoding "UTF-8")
           (begin
             (set! print/locale-encoding (λ (output-port text) (display text output-port)))
@@ -1247,19 +1226,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (set! print/locale-encoding (λ (output-port text) (print/encoding locale-encoding output-port text)))
             (set! request-bytes->string/locale-encoding (λ (bstr) (request-bytes->string/encoding locale-encoding bstr)))
             (set! list-string->bytes/locale-encoding (λ (str) (list-string->bytes/encoding locale-encoding str))))))
-
-    (define/private (print-crlf/encoding* text)
+    
+    (define (print-crlf/encoding* text)
       (print/locale-encoding output-port text)
       (write-bytes #"\r\n" output-port))
-
-    (define/private (print-log-event msg [user-name? #t])
+    
+    (define (print-log-event msg [user-name? #t])
       (if user-name?
           (fprintf (log-output-port)
                    "~a [~a] ~a : ~a\n" (date->string (current-date) #t) client-host user-id msg)
           (fprintf (log-output-port)
                    "~a [~a] ~a\n" (date->string (current-date) #t) client-host msg)))
-
-    (define/private (seconds->mdtm-time-format seconds)
+    
+    (define (seconds->mdtm-time-format seconds)
       (let ([dte (seconds->date (- seconds ftp-date-zone-offset))])
         (format "~a~a~a~a~a~a~a~a~a~a~a"
                 (date-year dte)
@@ -1273,8 +1252,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (date-minute dte)
                 (if (< (date-second dte) 10) "0" "")
                 (date-second dte))))
-
-    (define/private (mlst-info ftp-path [full-path? #t])
+    
+    (define (mlst-info ftp-path [full-path? #t])
       (let* ([ftp-path (simplify-ftp-path ftp-path)]
              [path (string-append root-dir ftp-path)]
              [name (path->string (file-name-from-path ftp-path))]
@@ -1284,7 +1263,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                  ".ftp-racket-file"
                                                                  "/.ftp-racket-directory")))]
              [sysbytes (vector-ref info 0)]
-             [user (current-ftp-user)]
+             [user current-ftp-user]
              [user-name (ftp-user-login user)]
              [group (ftp-user-group user)]
              [features mlst-features])
@@ -1310,7 +1289,50 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            "")
                        " "
                        (if full-path? ftp-path name))))
-
+    
+    (define (init-cmd-voc)
+      (set! cmd-voc
+            (make-hash
+             `(("USER" . ,USER-COMMAND)
+               ("PASS" . ,PASS-COMMAND)
+               ("QUIT" . ,QUIT-COMMAND)
+               ("PWD"  . ,PWD-COMMAND)
+               ("XPWD" . ,PWD-COMMAND)
+               ("PORT" . ,PORT-COMMAND)
+               ("CWD"  . ,CWD-COMMAND)
+               ("XCWD" . ,CWD-COMMAND)
+               ("CDUP" . ,CDUP-COMMAND)
+               ("XCUP" . ,CDUP-COMMAND)
+               ("NLST" . ,(λ(params) (DIR-LIST #t params)))
+               ("LIST" . ,(λ(params) (DIR-LIST #f params)))
+               ("MLST" . ,MLST-COMMAND)
+               ("MLSD" . ,MLSD-COMMAND)
+               ("TYPE" . ,TYPE-COMMAND)
+               ("ABOR" . ,ABOR-COMMAND)
+               ("PASV" . ,PASV-COMMAND)
+               ("RETR" . ,RETR-COMMAND)
+               ("MKD"  . ,MKD-COMMAND)
+               ("XMKD" . ,MKD-COMMAND)
+               ("RMD"  . ,RMD-COMMAND)
+               ("XRMD" . ,RMD-COMMAND)
+               ("STOR" . ,STORE-FILE)
+               ("APPE" . ,(λ(params) (STORE-FILE params 'append)))
+               ("DELE" . ,DELE-COMMAND)
+               ("RNFR" . ,RNFR-COMMAND)
+               ("RNTO" . ,RNTO-COMMAND)
+               ("STOU" . ,STOU-FILE)
+               ("MDTM" . ,MDTM-COMMAND)
+               ("SIZE" . ,SIZE-COMMAND)
+               ("NOOP" . ,NOOP-COMMAND)
+               ("SITE" . ,SITE-COMMAND)
+               ("SYST" . ,SYST-COMMAND)
+               ("OPTS" . ,OPTS-COMMAND)
+               ("FEAT" . ,FEAT-COMMAND)
+               ("MODE" . ,MODE-COMMAND)
+               ("STRU" . ,STRU-COMMAND)
+               ))))
+    
+    (init-cmd-voc)
     (release-encoding-proc)
     (super-new)))
 
@@ -1327,7 +1349,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define/public (set-passive-ports from to)
       (set! passive-ports-from from)
       (set! passive-ports-to to))
-
+    
     (define/public (add-ftp-user full-name login pass group home-dirs [root-dir (default-root-dir)])
       (let ([root-dir (get-params* #rx".+" root-dir)])
         (hash-set! ftp-users login (ftp-user full-name login pass group home-dirs root-dir))
@@ -1345,7 +1367,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                     (drop-right dirs 1)))
                         (ftp-mkdir* (string-append root-dir home-dir) login group))))
                   home-dirs)))
-
+    
     (define/public (run-server [port 21] [max-allow-wait 50] [host "127.0.0.1"])
       (let ([server-custodian (make-custodian)])
         (init-ftp-dirs (default-root-dir))
@@ -1371,7 +1393,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         ;(fprintf (log-output-port) "[~a] Connection close!\n" client-host)
                         )
                       (custodian-shutdown-all cust)))))))
-
+    
     (define/private (connect-shutdown time connect-cust client-host)
       (parameterize ([current-custodian connect-cust])
         (let* ([tick time]
@@ -1385,11 +1407,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     ;(fprintf (log-output-port) "[~a] Auto connection close!\n" client-host)
                     (custodian-shutdown-all connect-cust)))
           reset)))
-
+    
     (define/private (accept-client-request input-port output-port reset-timer client-host)
       (with-handlers ([any/c #|displayln|# void])
         (send (new ftp-client% [client-host client-host] [input-port input-port] [output-port output-port])
               eval-client-request reset-timer))
       (flush-output output-port))
-
+    
     (super-new)))
