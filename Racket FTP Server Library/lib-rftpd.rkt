@@ -30,47 +30,59 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (prefix-in srfi/19: srfi/19)
          srfi/48)
 
-(provide ftp-server%
-         default-root-dir
-         default-locale-encoding)
+(provide ftp-server%)
 
 (struct ftp-user (full-name login pass group home-dirs root-dir))
 (struct ftp-active-host-port (host port))
 (struct ftp-passive-host-port (host port) #:mutable)
 (struct ftp-mlst-features (size? modify? perm?) #:mutable)
 
+(struct ftp-server-params 
+  (passive-ports-from
+   passive-ports-to
+   current-passive-port
+   
+   passive-listeners
+   
+   default-root-dir
+   
+   default-locale-encoding
+   
+   log-output-port
+   
+   ftp-users)
+  #:mutable)
+
 (date-display-format 'iso-8601)
 
 ;;
 ;; ---------- Global Definitions ----------
 ;;
-(define default-locale-encoding (make-parameter "UTF-8"))
-
 (define ftp-run-date (srfi/19:current-date))
 (define ftp-date-zone-offset (srfi/19:date-zone-offset ftp-run-date))
 
-(define default-root-dir (make-parameter "ftp-dir"))
-(define ftp-users (make-hash))
-
 (define dead-process (make-custodian))
 
-(define passive-ports-from 40000)
-(define passive-ports-to 40599)
-(define current-passive-port passive-ports-from)
-(define passive-listeners #f)
+(define (default-server-params)
+  (ftp-server-params 
+   40000                 ;passive-ports-from
+   40599                 ;passive-ports-to
+   40000                 ;current-passive-port
+   
+   #f                    ;passive-listeners
+   
+   "ftp-dir"             ;default-root-dir
+   
+   "UTF-8"               ;default-locale-encoding
+   
+   (current-output-port) ;log-output-port
+   
+   (make-hash)           ;ftp-users
+   ))
+
 
 (define ftp-utils%
   (class object%
-    
-    (define/public (init-ftp-dirs root-dir)
-      (unless (ftp-dir-exists? root-dir)
-        (ftp-mkdir* root-dir)))
-    
-    (define/public (init-passive-listeners server-custodian host)
-      (parameterize ([current-custodian server-custodian])
-        (set! passive-listeners
-              (build-vector (- (add1 passive-ports-to) passive-ports-from)
-                            (λ (n) (tcp-listen (passive-ports-from . + . n) 1 #t host))))))
     
     (define/public (get-params req)
       (get-params* #rx"[^A-z]+.*" req))
@@ -235,13 +247,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (init-field client-host
                 client-input-port
                 client-output-port
-                [log-output-port (current-output-port)])
+                [server-params (default-server-params)])
     ;;
     ;; ---------- Private Definitions ----------
     ;;
     (define user-id #f)
     (define user-logged #f)
-    (define root-dir (default-root-dir))
+    (define root-dir default-root-dir)
     (define current-dir "/")
     (define transfer-mode 'active)
     (define representation-type 'ASCII)
@@ -249,7 +261,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define passive-host-port (ftp-passive-host-port (bytes 127 0 0 1) 20))
     (define current-process dead-process)
     (define rename-path #f)
-    (define locale-encoding (default-locale-encoding))
+    (define locale-encoding default-locale-encoding)
     (define mlst-features (ftp-mlst-features #t #t #f))
     
     (define print/locale-encoding #f)
@@ -881,7 +893,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (set! locale-encoding "UTF-8")
                         (print-crlf/encoding* "200 UTF8 mode enabled."))
                        ((OFF)
-                        (set! locale-encoding (default-locale-encoding))
+                        (set! locale-encoding default-locale-encoding)
                         (print-crlf/encoding* "200 UTF8 mode disabled."))
                        (else
                         (print-crlf/encoding* "501 UTF8: Syntax error in parameters or arguments.")))
@@ -1019,9 +1031,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        h5 h6)))
             (set-ftp-passive-host-port-port! host-port current-passive-port)
             (set! transfer-mode 'passive)
-            (set! current-passive-port (if (>= current-passive-port passive-ports-to)
-                                           passive-ports-from
-                                           (add1 current-passive-port))))))
+            (current-passive-port (if (>= current-passive-port passive-ports-to)
+                                      passive-ports-from
+                                      (add1 current-passive-port))))))
     
     (define (ftp-data-transfer data [file? #f])
       (case transfer-mode
@@ -1187,11 +1199,37 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     ;(displayln "Auto kill working process!" log-output-port)
                     (custodian-shutdown-all cust))))))
     
+    (define-syntax (passive-ports-from stx)
+      #'(ftp-server-params-passive-ports-from server-params))
+    
+    (define-syntax (passive-ports-to stx)
+      #'(ftp-server-params-passive-ports-to server-params))
+    
+    (define-syntax (passive-listeners stx)
+      #'(ftp-server-params-passive-listeners server-params))
+    
+    (define-syntax (default-root-dir stx)
+      #'(ftp-server-params-default-root-dir server-params))
+    
+    (define-syntax (default-locale-encoding stx)
+      #'(ftp-server-params-default-locale-encoding server-params))
+    
+    (define-syntax (ftp-users stx)
+      #'(ftp-server-params-ftp-users server-params))
+    
+    (define-syntax (log-output-port stx)
+      #'(ftp-server-params-log-output-port server-params))
+    
     (define-syntax (current-ftp-user stx)
       #'(hash-ref ftp-users user-id))
     
     (define-syntax (kill-current-ftp-process stx)
       #'(custodian-shutdown-all current-process))
+    
+    (define-syntax (current-passive-port stx)
+      (syntax-case stx ()
+        [(_ expr) #'(set-ftp-server-params-current-passive-port! server-params expr)]
+        [_ #'(ftp-server-params-current-passive-port server-params)]))
     
     (define (get-passive-listener port)
       (vector-ref passive-listeners (- port passive-ports-from)))
@@ -1334,23 +1372,33 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define ftp-server%
   (class ftp-utils%
-    (inherit init-ftp-dirs
-             init-passive-listeners
-             get-params*
+    (inherit get-params*
              ftp-dir-exists?
              ftp-mkdir*)
     ;;
     ;; ---------- Public Definitions ----------
     ;;
-    (init-field [log-output-port (current-output-port)])
+    ;;
+    ;; ---------- Private Definitions ----------
+    ;;
+    (define server-params (default-server-params))
     ;;
     ;; ---------- Public Methods ----------
     ;;
     (define/public (set-passive-ports from to)
-      (set! passive-ports-from from)
-      (set! passive-ports-to to))
+      (set-ftp-server-params-passive-ports-from! server-params from)
+      (set-ftp-server-params-passive-ports-to! server-params to))
     
-    (define/public (add-ftp-user full-name login pass group home-dirs [root-dir (default-root-dir)])
+    (define/public (set-default-locale-encoding encoding)
+      (set-ftp-server-params-default-locale-encoding! server-params encoding))
+    
+    (define/public (set-default-root-dir dir)
+      (set-ftp-server-params-default-root-dir! server-params dir))
+    
+    (define/public (set-log-output-port output-port)
+      (set-ftp-server-params-log-output-port! server-params output-port))
+    
+    (define/public (add-ftp-user full-name login pass group home-dirs [root-dir default-root-dir])
       (let ([root-dir (get-params* #rx".+" root-dir)])
         (hash-set! ftp-users login (ftp-user full-name login pass group home-dirs root-dir))
         (init-ftp-dirs root-dir)
@@ -1370,7 +1418,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/public (run-server [port 21] [max-allow-wait 50] [host "127.0.0.1"])
       (let ([server-custodian (make-custodian)])
-        (init-ftp-dirs (default-root-dir))
+        (init-ftp-dirs default-root-dir)
         (init-passive-listeners server-custodian host)
         (parameterize ([current-custodian server-custodian])
           (letrec ([listener (tcp-listen port max-allow-wait #t host)]
@@ -1414,8 +1462,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    [client-host host]
                    [client-input-port input-port]
                    [client-output-port output-port]
-                   [log-output-port log-output-port])
+                   [server-params server-params])
               eval-client-request reset-timer))
       (flush-output output-port))
+    
+    (define/private (init-ftp-dirs root-dir)
+      (unless (ftp-dir-exists? root-dir)
+        (ftp-mkdir* root-dir)))
+    
+    (define/private (init-passive-listeners server-custodian host)
+      (parameterize ([current-custodian server-custodian])
+        (passive-listeners (build-vector (- (add1 passive-ports-to) passive-ports-from)
+                                         (λ (n) (tcp-listen (passive-ports-from . + . n) 1 #t host))))))
+    
+    (define-syntax (passive-listeners stx)
+      (syntax-case stx ()
+        [(_ expr) #'(set-ftp-server-params-passive-listeners! server-params expr)]
+        [_ #'(ftp-server-params-passive-listeners server-params)]))
+    
+    (define-syntax (passive-ports-from stx)
+      #'(ftp-server-params-passive-ports-from server-params))
+    
+    (define-syntax (passive-ports-to stx)
+      #'(ftp-server-params-passive-ports-to server-params))
+    
+    (define-syntax (ftp-users stx)
+      #'(ftp-server-params-ftp-users server-params))
+    
+    (define-syntax (default-root-dir stx)
+      #'(ftp-server-params-default-root-dir server-params))
     
     (super-new)))

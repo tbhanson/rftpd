@@ -26,8 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #lang racket
 
-(require (prefix-in ftp: (file "lib-rftpd.rkt"))
-         racket/class)
+(require (prefix-in ftp: (file "lib-rftpd.rkt")))
 
 (define name&version "Racket FTP Server v1.0.8")
 (define copyright "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>")
@@ -110,7 +109,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (load-users)
   (unless log-out
     (set! log-out (open-output-file "logs/ftp.log" #:exists 'append)))
-  (set-field! log-output-port server log-out)
+  (send server set-log-output-port log-out)
   (displayln name&version)
   (displayln copyright) (newline)
   (run)
@@ -135,9 +134,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         ((passive-ports)
                          (send server set-passive-ports (second param) (third param)))
                         ((default-locale-encoding)
-                         (ftp:default-locale-encoding (second param)))
+                         (send server set-default-locale-encoding (second param)))
                         ((default-root-dir)
-                         (ftp:default-root-dir (second param)))
+                         (send server set-default-root-dir (second param)))
                         ((log-file)
                          (when log-out (close-output-port log-out))
                          (set! log-out (open-output-file (second param) #:exists 'append)))
