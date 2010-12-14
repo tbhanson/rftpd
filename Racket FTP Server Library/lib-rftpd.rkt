@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.0.12
+Racket FTP Server Library v1.0.13
 ----------------------------------------------------------------------
 
 Summary:
@@ -238,8 +238,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Public Client Definitions ----------
     ;;
     (init-field client-host)
-    (init-field input-port)
-    (init-field output-port)
+    (init-field client-input-port)
+    (init-field client-output-port)
     ;;
     ;; ---------- Private Client Definitions ----------
     ;;
@@ -263,11 +263,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (eval-client-request reset-timer)
+    (define/public (eval-client-request [reset-timer (λ() 0)])
       (print-crlf/encoding* "220 Racket FTP Server!")
-      (flush-output output-port)
+      (flush-output client-output-port)
       ;(sleep 1)
-      (let loop ([request (read-request input-port)])
+      (let loop ([request (read-request client-input-port)])
         (unless (eof-object? request)
           (when request
             ;(printf "[~a] ~a\n" client-host request)
@@ -283,10 +283,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     ((PASS) (PASS-COMMAND params))
                     ((QUIT) (QUIT-COMMAND params))
                     (else (print-crlf/encoding* "530 Please login with USER and PASS.")))))
-            (flush-output output-port))
+            (flush-output client-output-port))
           (reset-timer)
           (sleep .005)
-          (loop (read-request input-port)))))
+          (loop (read-request client-input-port)))))
     ;;
     ;; ---------- Private Methods ----------
     ;;
@@ -345,7 +345,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
           (begin
             (print-crlf/encoding* "221 Goodbye.")
-            (flush-output output-port)
+            (flush-output client-output-port)
             (raise 0))))
     
     (define (PWD-COMMAND params)
@@ -1045,10 +1045,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (parameterize ([current-custodian cust])
                       (with-handlers ([any/c (λ (e)
                                                (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                               (flush-output output-port))])
+                                               (flush-output client-output-port))])
                         (let-values ([(in out) (tcp-connect (byte-host->string host) port)])
                           (print-crlf/encoding* (format "150 Opening ~a mode data connection." representation-type))
-                          (flush-output output-port)
+                          (flush-output client-output-port)
                           (if file?
                               (call-with-input-file data
                                 (λ (in)
@@ -1063,7 +1063,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                  (write-bytes data out))))
                           (flush-output out)
                           (print-crlf/encoding* "226 Transfer complete.")
-                          (flush-output output-port)))
+                          (flush-output client-output-port)))
                       ;(displayln  "Process complete!" (log-output-port))
                       (custodian-shutdown-all cust))))
           (thread (λ ()
@@ -1082,11 +1082,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (parameterize ([current-custodian cust])
                       (with-handlers ([any/c (λ (e)
                                                (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                               (flush-output output-port))])
+                                               (flush-output client-output-port))])
                         (let ([listener (get-passive-listener port)])
                           (let-values ([(in out) (tcp-accept listener)])
                             (print-crlf/encoding* (format "150 Opening ~a mode data connection." representation-type))
-                            (flush-output output-port)
+                            (flush-output client-output-port)
                             (if file?
                                 (call-with-input-file data
                                   (λ (in)
@@ -1101,7 +1101,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                    (write-bytes data out))))
                             (flush-output out)
                             (print-crlf/encoding* "226 Transfer complete.")
-                            (flush-output output-port))))
+                            (flush-output client-output-port))))
                       ;(displayln "Process complete!" (log-output-port))
                       (custodian-shutdown-all cust))))
           (thread (λ ()
@@ -1126,14 +1126,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (thread (λ ()
                     (with-handlers ([any/c (λ (e)
                                              (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                             (flush-output output-port))])
+                                             (flush-output client-output-port))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (parameterize ([current-custodian cust])
                             (let-values ([(in out) (tcp-connect (byte-host->string host) port)])
                               (print-crlf/encoding* (format "150 Opening ~a mode data connection."
                                                             representation-type))
-                              (flush-output output-port)
+                              (flush-output client-output-port)
                               (let loop ([dat (read-bytes 10048576 in)])
                                 (unless (eof-object? dat)
                                   (write-bytes dat fout)
@@ -1143,7 +1143,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                        (if (eq? exists-mode 'append) "Append" "Store")
                                                        (real-path->ftp-path new-file-full-path)))
                               (print-crlf/encoding* "226 Transfer complete.")
-                              (flush-output output-port))))
+                              (flush-output client-output-port))))
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" (log-output-port))
@@ -1163,7 +1163,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (thread (λ ()
                     (with-handlers ([any/c (λ (e)
                                              (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                             (flush-output output-port))])
+                                             (flush-output client-output-port))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (parameterize ([current-custodian cust])
@@ -1171,7 +1171,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (let-values ([(in out) (tcp-accept listener)])
                                 (print-crlf/encoding* (format "150 Opening ~a mode data connection."
                                                               representation-type))
-                                (flush-output output-port)
+                                (flush-output client-output-port)
                                 (let loop ([dat (read-bytes 10048576 in)])
                                   (unless (eof-object? dat)
                                     (write-bytes dat fout)
@@ -1181,7 +1181,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                          (if (eq? exists-mode 'append) "Append" "Store")
                                                          (real-path->ftp-path new-file-full-path)))
                                 (print-crlf/encoding* "226 Transfer complete.")
-                                (flush-output output-port)))))
+                                (flush-output client-output-port)))))
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" (log-output-port))
@@ -1228,8 +1228,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (set! list-string->bytes/locale-encoding (λ (str) (list-string->bytes/encoding locale-encoding str))))))
     
     (define (print-crlf/encoding* text)
-      (print/locale-encoding output-port text)
-      (write-bytes #"\r\n" output-port))
+      (print/locale-encoding client-output-port text)
+      (write-bytes #"\r\n" client-output-port))
     
     (define (print-log-event msg [user-name? #t])
       (if user-name?
@@ -1389,7 +1389,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (thread (λ ()
                       (let-values ([(server-host client-host) (tcp-addresses in)])
                         ;(fprintf (log-output-port) "[~a] Accept connection!\n" client-host)
-                        (accept-client-request in out (connect-shutdown 60 cust client-host) client-host)
+                        (accept-client-request client-host in out (connect-shutdown 60 cust client-host))
                         ;(fprintf (log-output-port) "[~a] Connection close!\n" client-host)
                         )
                       (custodian-shutdown-all cust)))))))
@@ -1408,9 +1408,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (custodian-shutdown-all connect-cust)))
           reset)))
     
-    (define/private (accept-client-request input-port output-port reset-timer client-host)
+    (define/private (accept-client-request host input-port output-port reset-timer)
       (with-handlers ([any/c #|displayln|# void])
-        (send (new ftp-client% [client-host client-host] [input-port input-port] [output-port output-port])
+        (send (new ftp-client% [client-host host] [client-input-port input-port] [client-output-port output-port])
               eval-client-request reset-timer))
       (flush-output output-port))
     
