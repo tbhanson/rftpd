@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.0.14
+Racket FTP Server Library v1.0.15
 ----------------------------------------------------------------------
 
 Summary:
@@ -1382,6 +1382,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Private Definitions ----------
     ;;
     (define server-params (default-server-params))
+    (define server-custodian (make-parameter #f))
     ;;
     ;; ---------- Public Methods ----------
     ;;
@@ -1416,17 +1417,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (ftp-mkdir* (string-append root-dir home-dir) login group))))
                   home-dirs)))
     
-    (define/public (run-server [port 21] [max-allow-wait 50] [host "127.0.0.1"])
-      (let ([server-custodian (make-custodian)])
+    (define/public (run [port 21] [max-allow-wait 50] [host "127.0.0.1"])
+      (unless (server-custodian)
+        (server-custodian (make-custodian))
         (init-ftp-dirs default-root-dir)
-        (init-passive-listeners server-custodian host)
-        (parameterize ([current-custodian server-custodian])
+        (init-passive-listeners (server-custodian) host)
+        (parameterize ([current-custodian (server-custodian)])
           (letrec ([listener (tcp-listen port max-allow-wait #t host)]
                    [main-loop (λ ()
                                 (handle-client-request listener)
                                 (main-loop))])
-            (thread main-loop)))
-        server-custodian))
+            (thread main-loop)))))
+    
+    (define/public (stop)
+      (when (server-custodian)
+        (custodian-shutdown-all (server-custodian))
+        (server-custodian #f)))
     ;;
     ;; ---------- Private Methods ----------
     ;;

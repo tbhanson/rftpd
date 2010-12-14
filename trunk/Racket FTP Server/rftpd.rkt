@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.0.8
+Racket FTP Server v1.0.9
 ----------------------------------------------------------------------
 
 Summary:
@@ -28,7 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (require (prefix-in ftp: (file "lib-rftpd.rkt")))
 
-(define name&version "Racket FTP Server v1.0.8")
+(define name&version "Racket FTP Server v1.0.9")
 (define copyright "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>")
 
 (define server-host "127.0.0.1")
@@ -39,7 +39,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define control-host "127.0.0.1")
 (define control-port 40600)
 
-(define main-server-custodian #f)
 (define control-custodian #f)
 (define log-out #f)
 
@@ -97,11 +96,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (next (read input-port))))))))
 
 (define (run)
-  (set! main-server-custodian (send server run-server server-port server-max-allow-wait server-host))
+  (send server run server-port server-max-allow-wait server-host)
   (displayln "Server running!"))
 
 (define (stop)
-  (custodian-shutdown-all main-server-custodian)
+  (send server stop)
   (displayln "Server stopped!"))
 
 (define (start)
