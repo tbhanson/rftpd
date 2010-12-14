@@ -80,6 +80,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    (make-hash)           ;ftp-users
    ))
 
+(define-syntax (any/exc stx) #'void)
+
 
 (define ftp-utils%
   (class object%
@@ -143,7 +145,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (bytes=? (filename-extension spath) #"ftp-racket-directory")))))
     
     (define/public (simplify-ftp-path ftp-path [drop-tail-elem 0])
-      (with-handlers ([any/c (λ (e) "/")])
+      (with-handlers ([any/exc (λ (e) "/")])
         (let ([path-lst (drop-right (filter (λ (s) (not (string=? s "")))
                                             (regexp-split #rx"[/\\\\]+" (simplify-path ftp-path #f)))
                                     drop-tail-elem)])
@@ -399,7 +401,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     ;; Инициирует активный режим.
     (define (PORT-COMMAND params)
-      (with-handlers ([any/c (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
+      (with-handlers ([any/exc (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
         (unless (regexp-match #rx"[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+" params)
           (raise 'error))
         (let* ([l (regexp-split #rx"," params)]
@@ -1051,9 +1053,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (parameterize ([current-custodian cust])
           (thread (λ ()
                     (parameterize ([current-custodian cust])
-                      (with-handlers ([any/c (λ (e)
-                                               (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                               (flush-output client-output-port))])
+                      (with-handlers ([any/exc (λ (e)
+                                                 (print-crlf/encoding* "426 Connection closed; transfer aborted.")
+                                                 (flush-output client-output-port))])
                         (let-values ([(in out) (tcp-connect (byte-host->string host) port)])
                           (print-crlf/encoding* (format "150 Opening ~a mode data connection." representation-type))
                           (flush-output client-output-port)
@@ -1088,9 +1090,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (parameterize ([current-custodian cust])
           (thread (λ ()
                     (parameterize ([current-custodian cust])
-                      (with-handlers ([any/c (λ (e)
-                                               (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                               (flush-output client-output-port))])
+                      (with-handlers ([any/exc (λ (e)
+                                                 (print-crlf/encoding* "426 Connection closed; transfer aborted.")
+                                                 (flush-output client-output-port))])
                         (let ([listener (get-passive-listener port)])
                           (let-values ([(in out) (tcp-accept listener)])
                             (print-crlf/encoding* (format "150 Opening ~a mode data connection." representation-type))
@@ -1132,9 +1134,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (set! current-process cust)
         (parameterize ([current-custodian cust])
           (thread (λ ()
-                    (with-handlers ([any/c (λ (e)
-                                             (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                             (flush-output client-output-port))])
+                    (with-handlers ([any/exc (λ (e)
+                                               (print-crlf/encoding* "426 Connection closed; transfer aborted.")
+                                               (flush-output client-output-port))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (parameterize ([current-custodian cust])
@@ -1169,9 +1171,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (set! current-process cust)
         (parameterize ([current-custodian cust])
           (thread (λ ()
-                    (with-handlers ([any/c (λ (e)
-                                             (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                             (flush-output client-output-port))])
+                    (with-handlers ([any/exc (λ (e)
+                                               (print-crlf/encoding* "426 Connection closed; transfer aborted.")
+                                               (flush-output client-output-port))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (parameterize ([current-custodian cust])
@@ -1463,7 +1465,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           reset)))
     
     (define/private (accept-client-request host input-port output-port reset-timer)
-      (with-handlers ([any/c #|displayln|# void])
+      (with-handlers ([any/exc #|displayln|# void])
         (send (new ftp-client% 
                    [client-host host]
                    [client-input-port input-port]

@@ -24,7 +24,12 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 |#
 
-#lang racket
+#lang racket/base
+
+(require racket/cmdline
+         racket/list
+         racket/tcp
+         (for-syntax racket/base))
 
 (define name&version "Racket FTP Server Control Interface v1.0.4")
 (define copyright    "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>")
@@ -54,7 +59,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (let ([cust (make-custodian)])
   (parameterize ([current-custodian cust])
-    (with-handlers ([any/c void])
+    (with-handlers ([any/exc void])
       (call-with-input-file (config-file)
         (λ (in)
           (let ([conf (read in)])
@@ -107,3 +112,5 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       (unless (eq? cmd '%exit)
                         (loop))))))))))))
     (custodian-shutdown-all cust)))
+
+(define-syntax (any/exc stx) #'void)
