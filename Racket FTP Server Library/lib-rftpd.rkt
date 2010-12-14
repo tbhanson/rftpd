@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.0.13
+Racket FTP Server Library v1.0.14
 ----------------------------------------------------------------------
 
 Summary:
@@ -26,15 +26,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #lang racket
 
-(require racket/class
-         racket/date
+(require racket/date
          (prefix-in srfi/19: srfi/19)
          srfi/48)
 
 (provide ftp-server%
          default-root-dir
-         default-locale-encoding
-         log-output-port)
+         default-locale-encoding)
 
 (struct ftp-user (full-name login pass group home-dirs root-dir))
 (struct ftp-active-host-port (host port))
@@ -60,9 +58,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define passive-ports-to 40599)
 (define current-passive-port passive-ports-from)
 (define passive-listeners #f)
-
-(define log-output-port (make-parameter (current-output-port)))
-
 
 (define ftp-utils%
   (class object%
@@ -235,13 +230,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              ftp-mkdir*
              ftp-mksys-file)
     ;;
-    ;; ---------- Public Client Definitions ----------
+    ;; ---------- Public Definitions ----------
     ;;
-    (init-field client-host)
-    (init-field client-input-port)
-    (init-field client-output-port)
+    (init-field client-host
+                client-input-port
+                client-output-port
+                [log-output-port (current-output-port)])
     ;;
-    ;; ---------- Private Client Definitions ----------
+    ;; ---------- Private Definitions ----------
     ;;
     (define user-id #f)
     (define user-logged #f)
@@ -1064,11 +1060,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (flush-output out)
                           (print-crlf/encoding* "226 Transfer complete.")
                           (flush-output client-output-port)))
-                      ;(displayln  "Process complete!" (log-output-port))
+                      ;(displayln  "Process complete!" log-output-port)
                       (custodian-shutdown-all cust))))
           (thread (λ ()
                     (sleep 600)
-                    ;(displayln "Auto kill working process!" (log-output-port))
+                    ;(displayln "Auto kill working process!" log-output-port)
                     (custodian-shutdown-all cust))))))
     
     ;; Experimental
@@ -1102,11 +1098,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             (flush-output out)
                             (print-crlf/encoding* "226 Transfer complete.")
                             (flush-output client-output-port))))
-                      ;(displayln "Process complete!" (log-output-port))
+                      ;(displayln "Process complete!" log-output-port)
                       (custodian-shutdown-all cust))))
           (thread (λ ()
                     (sleep 600)
-                    ;(displayln "Auto kill working process!" (log-output-port))
+                    ;(displayln "Auto kill working process!" log-output-port)
                     (custodian-shutdown-all cust))))))
     
     (define (ftp-store-file new-file-full-path exists-mode)
@@ -1146,11 +1142,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (flush-output client-output-port))))
                         #:mode 'binary
                         #:exists exists-mode))
-                    ;(displayln "Process complete!" (log-output-port))
+                    ;(displayln "Process complete!" log-output-port)
                     (custodian-shutdown-all cust)))
           (thread (λ ()
                     (sleep 600)
-                    ;(displayln "Auto kill working process!" (log-output-port))
+                    ;(displayln "Auto kill working process!" log-output-port)
                     (custodian-shutdown-all cust))))))
     
     ;; Experimental
@@ -1184,11 +1180,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (flush-output client-output-port)))))
                         #:mode 'binary
                         #:exists exists-mode))
-                    ;(displayln "Process complete!" (log-output-port))
+                    ;(displayln "Process complete!" log-output-port)
                     (custodian-shutdown-all cust)))
           (thread (λ ()
                     (sleep 600)
-                    ;(displayln "Auto kill working process!" (log-output-port))
+                    ;(displayln "Auto kill working process!" log-output-port)
                     (custodian-shutdown-all cust))))))
     
     (define-syntax (current-ftp-user stx)
@@ -1233,9 +1229,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (print-log-event msg [user-name? #t])
       (if user-name?
-          (fprintf (log-output-port)
+          (fprintf log-output-port
                    "~a [~a] ~a : ~a\n" (date->string (current-date) #t) client-host user-id msg)
-          (fprintf (log-output-port)
+          (fprintf log-output-port
                    "~a [~a] ~a\n" (date->string (current-date) #t) client-host msg)))
     
     (define (seconds->mdtm-time-format seconds)
@@ -1344,6 +1340,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              ftp-dir-exists?
              ftp-mkdir*)
     ;;
+    ;; ---------- Public Definitions ----------
+    ;;
+    (init-field [log-output-port (current-output-port)])
+    ;;
     ;; ---------- Public Methods ----------
     ;;
     (define/public (set-passive-ports from to)
@@ -1388,9 +1388,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (let-values ([(in out) (tcp-accept listener)])
             (thread (λ ()
                       (let-values ([(server-host client-host) (tcp-addresses in)])
-                        ;(fprintf (log-output-port) "[~a] Accept connection!\n" client-host)
+                        ;(fprintf log-output-port "[~a] Accept connection!\n" client-host)
                         (accept-client-request client-host in out (connect-shutdown 60 cust client-host))
-                        ;(fprintf (log-output-port) "[~a] Connection close!\n" client-host)
+                        ;(fprintf log-output-port "[~a] Connection close!\n" client-host)
                         )
                       (custodian-shutdown-all cust)))))))
     
@@ -1404,13 +1404,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (sleep 1)
                         (set! tick (sub1 tick))
                         (loop)))
-                    ;(fprintf (log-output-port) "[~a] Auto connection close!\n" client-host)
+                    ;(fprintf log-output-port "[~a] Auto connection close!\n" client-host)
                     (custodian-shutdown-all connect-cust)))
           reset)))
     
     (define/private (accept-client-request host input-port output-port reset-timer)
       (with-handlers ([any/c #|displayln|# void])
-        (send (new ftp-client% [client-host host] [client-input-port input-port] [client-output-port output-port])
+        (send (new ftp-client% 
+                   [client-host host]
+                   [client-input-port input-port]
+                   [client-output-port output-port]
+                   [log-output-port log-output-port])
               eval-client-request reset-timer))
       (flush-output output-port))
     
