@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.0.7
+Racket FTP Server v1.0.8
 ----------------------------------------------------------------------
 
 Summary:
@@ -29,7 +29,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (require (prefix-in ftp: (file "lib-rftpd.rkt"))
          racket/class)
 
-(define name&version "Racket FTP Server v1.0.7")
+(define name&version "Racket FTP Server v1.0.8")
 (define copyright "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>")
 
 (define server-host "127.0.0.1")
@@ -110,7 +110,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (load-users)
   (unless log-out
     (set! log-out (open-output-file "logs/ftp.log" #:exists 'append)))
-  (ftp:log-output-port log-out)
+  (set-field! log-output-port server log-out)
   (displayln name&version)
   (displayln copyright) (newline)
   (run)
@@ -155,7 +155,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (let ([conf (read in)])
         (when (eq? (car conf) 'ftp-server-users)
           (for-each (λ (user)
-                      (send server add-ftp-user 
+                      (send server add-ftp-user
                             (car user) (second user) (third user) (fourth user) (fifth user) (sixth user)))
                     (cdr conf)))))))
 
