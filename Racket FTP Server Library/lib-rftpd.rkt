@@ -259,6 +259,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define current-dir "/")
     (define transfer-mode 'active)
     (define representation-type 'ASCII)
+    (define restart-marker #f)
     (define active-host-port (ftp-active-host-port (bytes 127 0 0 1) 20))
     (define passive-host-port (ftp-passive-host-port (bytes 127 0 0 1) 20))
     (define current-process dead-process)
@@ -273,7 +274,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (eval-client-request [reset-timer (λ() 0)])
+    (define/public (eval-client-request [reset-timer void])
       (with-handlers ([any/exc #|displayln|# void])
         (print-crlf/encoding* "220 Racket FTP Server!")
         ;(sleep 1)
@@ -410,7 +411,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; Инициирует активный режим.
     (define (PORT-COMMAND params)
       (with-handlers ([any/exc (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
-        (unless (regexp-match #rx"[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+" params)
+        (unless (regexp-match #rx"^[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+$" params)
           (raise 'error))
         (let* ([l (regexp-split #rx"," params)]
                [host (bytes (string->number (first l)) (string->number (second l))
@@ -420,6 +421,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (set! transfer-mode 'active)
           (set! active-host-port (ftp-active-host-port host port))
           (print-crlf/encoding* "200 Port command successful."))))
+    
+    ;; Experimental
+    (define (REST-COMMAND params)
+      (with-handlers ([any/exc (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
+        (set! restart-marker (string->number (car (regexp-match #rx"^[0-9]+$" params))))))
     
     ;; Посылает клиенту список файлов директории.
     (define (DIR-LIST params [short? #f])
@@ -1128,10 +1134,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
+                          (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
+                            (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
+                                            (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
                           (parameterize ([current-custodian cust])
                             (let-values ([(in out) (tcp-connect (byte-host->string host) port)])
                               (print-crlf/encoding* (format "150 Opening ~a mode data connection."
                                                             representation-type))
+                              (when restart-marker
+                                (file-position fout restart-marker)
+                                (set! restart-marker #f))
                               (let loop ([dat (read-bytes 10048576 in)])
                                 (unless (eof-object? dat)
                                   (write-bytes dat fout)
@@ -1144,9 +1156,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" log-output-port)
-                    (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
-                      (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
-                                      (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
                     (custodian-shutdown-all cust)))
           (thread (λ ()
                     (sleep 600)
@@ -1165,11 +1174,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
+                          (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
+                            (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
+                                            (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
                           (parameterize ([current-custodian cust])
                             (let ([listener (get-passive-listener port)])
                               (let-values ([(in out) (tcp-accept listener)])
                                 (print-crlf/encoding* (format "150 Opening ~a mode data connection."
                                                               representation-type))
+                                (when restart-marker
+                                  (file-position fout restart-marker)
+                                  (set! restart-marker #f))
                                 (let loop ([dat (read-bytes 10048576 in)])
                                   (unless (eof-object? dat)
                                     (write-bytes dat fout)
@@ -1182,9 +1197,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" log-output-port)
-                    (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
-                      (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
-                                      (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
                     (custodian-shutdown-all cust)))
           (thread (λ ()
                     (sleep 600)
@@ -1327,6 +1339,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                ("PWD"  . ,PWD-COMMAND)
                ("XPWD" . ,PWD-COMMAND)
                ("PORT" . ,PORT-COMMAND)
+               ("REST" . ,REST-COMMAND)
                ("CWD"  . ,CWD-COMMAND)
                ("XCWD" . ,CWD-COMMAND)
                ("CDUP" . ,CDUP-COMMAND)
