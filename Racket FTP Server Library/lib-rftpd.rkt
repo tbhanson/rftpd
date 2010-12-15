@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.0.15
+Racket FTP Server Library v1.0.16
 ----------------------------------------------------------------------
 
 Summary:
@@ -274,29 +274,29 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Public Methods ----------
     ;;
     (define/public (eval-client-request [reset-timer (λ() 0)])
-      (print-crlf/encoding* "220 Racket FTP Server!")
-      (flush-output client-output-port)
-      ;(sleep 1)
-      (let loop ([request (read-request client-input-port)])
-        (unless (eof-object? request)
-          (when request
-            ;(printf "[~a] ~a\n" client-host request)
-            (let ([cmd (string-upcase (car (regexp-match #rx"[^ ]+" request)))]
-                  [params (get-params request)])
-              (if user-logged
-                  (let ([fun (hash-ref cmd-voc cmd #f)])
-                    (if fun
-                        (fun params)
-                        (print-crlf/encoding* (format "502 ~a not implemented." cmd))))
-                  (case (string->symbol cmd)
-                    ((USER) (USER-COMMAND params))
-                    ((PASS) (PASS-COMMAND params))
-                    ((QUIT) (QUIT-COMMAND params))
-                    (else (print-crlf/encoding* "530 Please login with USER and PASS.")))))
-            (flush-output client-output-port))
-          (reset-timer)
-          (sleep .005)
-          (loop (read-request client-input-port)))))
+      (with-handlers ([any/exc #|displayln|# void])
+        (print-crlf/encoding* "220 Racket FTP Server!")
+        ;(sleep 1)
+        (let loop ([request (read-request client-input-port)])
+          (unless (eof-object? request)
+            (when request
+              ;(printf "[~a] ~a\n" client-host request)
+              (let ([cmd (string-upcase (car (regexp-match #rx"[^ ]+" request)))]
+                    [params (get-params request)])
+                (if user-logged
+                    (let ([fun (hash-ref cmd-voc cmd #f)])
+                      (if fun
+                          (fun params)
+                          (print-crlf/encoding* (format "502 ~a not implemented." cmd))))
+                    (case (string->symbol cmd)
+                      ((USER) (USER-COMMAND params))
+                      ((PASS) (PASS-COMMAND params))
+                      ((QUIT) (QUIT-COMMAND params))
+                      (else (print-crlf/encoding* "530 Please login with USER and PASS."))))))
+            (reset-timer)
+            (sleep .005)
+            (loop (read-request client-input-port)))))
+      (flush-output client-output-port))
     ;;
     ;; ---------- Private Methods ----------
     ;;
@@ -350,12 +350,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (when correct?
           (set! root-dir (ftp-user-root-dir (hash-ref ftp-users user-id))))))
     
+    (define (REIN-COMMAND params)
+      (if params
+          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (begin
+            (set! user-id #f)
+            (set! user-logged #f)
+            (print-crlf/encoding* "220 Service ready for new user."))))
+    
     (define (QUIT-COMMAND params)
       (if params
           (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
           (begin
+            (kill-current-ftp-process)
             (print-crlf/encoding* "221 Goodbye.")
-            (flush-output client-output-port)
             (raise 0))))
     
     (define (PWD-COMMAND params)
@@ -414,7 +422,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (print-crlf/encoding* "200 Port command successful."))))
     
     ;; Посылает клиенту список файлов директории.
-    (define (DIR-LIST short? params)
+    (define (DIR-LIST params [short? #f])
       (local
         [(define (month->string m)
            (case m
@@ -647,20 +655,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     ;; Сохраняет файл.
     (define (STORE-FILE params [exists-mode 'truncate])
-      (local [(define (fstore full-path-file user)
-                (ftp-store-file full-path-file exists-mode)
-                (unless (file-exists? (string-append full-path-file ".ftp-racket-file"))
-                  (ftp-mksys-file (string-append full-path-file ".ftp-racket-file")
-                                  (ftp-user-login user) (ftp-user-group user))))
-              
-              (define (stor full-parent-path file-name user)
+      (local [(define (stor full-parent-path file-name)
                 (let ([real-path (string-append full-parent-path "/" file-name)])
-                  (if (and (ftp-dir-allow-write? full-parent-path user)
+                  (if (and (ftp-dir-allow-write? full-parent-path current-ftp-user)
                            (ftp-file-name-safe? real-path)
                            (if (ftp-file-exists? real-path)
-                               (ftp-file-allow-write? real-path user)
+                               (ftp-file-allow-write? real-path current-ftp-user)
                                #t))
-                      (fstore real-path user)
+                      (ftp-store-file real-path exists-mode)
                       (print-crlf/encoding* "550 Can't store file. Permission denied!"))))]
         
         (if params
@@ -669,41 +671,35 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                   #f)]
                    [parent-path (if (and file-name (path-only params))
                                     (path->string (path-only params))
-                                    #f)]
-                   [user current-ftp-user])
+                                    #f)])
               (cond
                 ((not file-name)
                  (print-crlf/encoding* "550 Can't store file."))
                 ((not parent-path)
-                 (stor (string-append root-dir current-dir) file-name user))
+                 (stor (string-append root-dir current-dir) file-name))
                 ((and (memq (string-ref parent-path 0) '(#\/ #\\))
                       (ftp-dir-exists? (string-append root-dir parent-path)))
                  (stor (string-append root-dir parent-path) file-name))
                 ((ftp-dir-exists? (string-append root-dir current-dir "/" parent-path))
-                 (stor (string-append root-dir current-dir "/" parent-path) file-name user))
+                 (stor (string-append root-dir current-dir "/" parent-path) file-name))
                 (else
                  (print-crlf/encoding* "550 Can't store file."))))
             (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
     
     ;; Experimental
     (define (STOU-FILE params)
-      (let ([user current-ftp-user])
-        (cond
-          (params
-           (print-crlf/encoding* "501 Syntax error in parameters or arguments."))
-          ((ftp-dir-allow-write? (string-append root-dir current-dir) user)
-           (let* ([file-name (let loop ([fname (gensym "noname")])
-                               (if (ftp-file-exists? (string-append root-dir
-                                                                    current-dir
-                                                                    "/" fname))
-                                   (loop (gensym "noname"))
-                                   fname))]
-                  [path (string-append root-dir current-dir "/" file-name)])
-             (ftp-store-file path 'truncate)
-             (ftp-mksys-file (string-append path ".ftp-racket-file")
-                             (ftp-user-login user) (ftp-user-group user))))
-          (else
-           (print-crlf/encoding* "550 Can't store file. Permission denied!")))))
+      (cond
+        (params
+         (print-crlf/encoding* "501 Syntax error in parameters or arguments."))
+        ((ftp-dir-allow-write? (string-append root-dir current-dir) current-ftp-user)
+         (let* ([file-name (let loop ([fname (gensym "noname")])
+                             (if (ftp-file-exists? (string-append root-dir current-dir "/" fname))
+                                 (loop (gensym "noname"))
+                                 fname))]
+                [path (string-append root-dir current-dir "/" file-name)])
+           (ftp-store-file path 'truncate)))
+        (else
+         (print-crlf/encoding* "550 Can't store file. Permission denied!"))))
     
     ;; Удаляет файл.
     (define (DELE-COMMAND params)
@@ -1054,11 +1050,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (thread (λ ()
                     (parameterize ([current-custodian cust])
                       (with-handlers ([any/exc (λ (e)
-                                                 (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                                 (flush-output client-output-port))])
+                                                 (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
                         (let-values ([(in out) (tcp-connect (byte-host->string host) port)])
                           (print-crlf/encoding* (format "150 Opening ~a mode data connection." representation-type))
-                          (flush-output client-output-port)
                           (if file?
                               (call-with-input-file data
                                 (λ (in)
@@ -1072,8 +1066,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 ((Image)
                                  (write-bytes data out))))
                           (flush-output out)
-                          (print-crlf/encoding* "226 Transfer complete.")
-                          (flush-output client-output-port)))
+                          (print-crlf/encoding* "226 Transfer complete.")))
                       ;(displayln  "Process complete!" log-output-port)
                       (custodian-shutdown-all cust))))
           (thread (λ ()
@@ -1091,12 +1084,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (thread (λ ()
                     (parameterize ([current-custodian cust])
                       (with-handlers ([any/exc (λ (e)
-                                                 (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                                 (flush-output client-output-port))])
+                                                 (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
                         (let ([listener (get-passive-listener port)])
                           (let-values ([(in out) (tcp-accept listener)])
                             (print-crlf/encoding* (format "150 Opening ~a mode data connection." representation-type))
-                            (flush-output client-output-port)
                             (if file?
                                 (call-with-input-file data
                                   (λ (in)
@@ -1110,8 +1101,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                   ((Image)
                                    (write-bytes data out))))
                             (flush-output out)
-                            (print-crlf/encoding* "226 Transfer complete.")
-                            (flush-output client-output-port))))
+                            (print-crlf/encoding* "226 Transfer complete."))))
                       ;(displayln "Process complete!" log-output-port)
                       (custodian-shutdown-all cust))))
           (thread (λ ()
@@ -1135,15 +1125,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (parameterize ([current-custodian cust])
           (thread (λ ()
                     (with-handlers ([any/exc (λ (e)
-                                               (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                               (flush-output client-output-port))])
+                                               (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (parameterize ([current-custodian cust])
                             (let-values ([(in out) (tcp-connect (byte-host->string host) port)])
                               (print-crlf/encoding* (format "150 Opening ~a mode data connection."
                                                             representation-type))
-                              (flush-output client-output-port)
                               (let loop ([dat (read-bytes 10048576 in)])
                                 (unless (eof-object? dat)
                                   (write-bytes dat fout)
@@ -1152,11 +1140,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (print-log-event (format "~a data to file ~a"
                                                        (if (eq? exists-mode 'append) "Append" "Store")
                                                        (real-path->ftp-path new-file-full-path)))
-                              (print-crlf/encoding* "226 Transfer complete.")
-                              (flush-output client-output-port))))
+                              (print-crlf/encoding* "226 Transfer complete."))))
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" log-output-port)
+                    (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
+                      (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
+                                      (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
                     (custodian-shutdown-all cust)))
           (thread (λ ()
                     (sleep 600)
@@ -1172,8 +1162,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (parameterize ([current-custodian cust])
           (thread (λ ()
                     (with-handlers ([any/exc (λ (e)
-                                               (print-crlf/encoding* "426 Connection closed; transfer aborted.")
-                                               (flush-output client-output-port))])
+                                               (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (parameterize ([current-custodian cust])
@@ -1181,7 +1170,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (let-values ([(in out) (tcp-accept listener)])
                                 (print-crlf/encoding* (format "150 Opening ~a mode data connection."
                                                               representation-type))
-                                (flush-output client-output-port)
                                 (let loop ([dat (read-bytes 10048576 in)])
                                   (unless (eof-object? dat)
                                     (write-bytes dat fout)
@@ -1190,11 +1178,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (print-log-event (format "~a data to file ~a"
                                                          (if (eq? exists-mode 'append) "Append" "Store")
                                                          (real-path->ftp-path new-file-full-path)))
-                                (print-crlf/encoding* "226 Transfer complete.")
-                                (flush-output client-output-port)))))
+                                (print-crlf/encoding* "226 Transfer complete.")))))
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" log-output-port)
+                    (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
+                      (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
+                                      (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
                     (custodian-shutdown-all cust)))
           (thread (λ ()
                     (sleep 600)
@@ -1265,7 +1255,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (print-crlf/encoding* text)
       (print/locale-encoding client-output-port text)
-      (write-bytes #"\r\n" client-output-port))
+      (write-bytes #"\r\n" client-output-port)
+      (flush-output client-output-port))
     
     (define (print-log-event msg [user-name? #t])
       (if user-name?
@@ -1332,6 +1323,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              `(("USER" . ,USER-COMMAND)
                ("PASS" . ,PASS-COMMAND)
                ("QUIT" . ,QUIT-COMMAND)
+               ("REIN" . ,REIN-COMMAND)
                ("PWD"  . ,PWD-COMMAND)
                ("XPWD" . ,PWD-COMMAND)
                ("PORT" . ,PORT-COMMAND)
@@ -1339,8 +1331,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                ("XCWD" . ,CWD-COMMAND)
                ("CDUP" . ,CDUP-COMMAND)
                ("XCUP" . ,CDUP-COMMAND)
-               ("NLST" . ,(λ(params) (DIR-LIST #t params)))
-               ("LIST" . ,(λ(params) (DIR-LIST #f params)))
+               ("NLST" . ,(λ(params) (DIR-LIST params #t)))
+               ("LIST" . ,(λ(params) (DIR-LIST params)))
                ("MLST" . ,MLST-COMMAND)
                ("MLSD" . ,MLSD-COMMAND)
                ("TYPE" . ,TYPE-COMMAND)
