@@ -80,8 +80,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    (make-hash)           ;ftp-users
    ))
 
-(define-syntax (any/exc stx) #'void)
-
 
 (define ftp-utils%
   (class object%
@@ -145,7 +143,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (bytes=? (filename-extension spath) #"ftp-racket-directory")))))
     
     (define/public (simplify-ftp-path ftp-path [drop-tail-elem 0])
-      (with-handlers ([any/exc (λ (e) "/")])
+      (with-handlers ([any/c (λ (e) "/")])
         (let ([path-lst (drop-right (filter (λ (s) (not (string=? s "")))
                                             (regexp-split #rx"[/\\\\]+" (simplify-path ftp-path #f)))
                                     drop-tail-elem)])
@@ -270,12 +268,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define print/locale-encoding #f)
     (define request-bytes->string/locale-encoding #f)
     (define list-string->bytes/locale-encoding #f)
+    (define cmd-list null)
     (define cmd-voc #f)
     ;;
     ;; ---------- Public Methods ----------
     ;;
     (define/public (eval-client-request [reset-timer void])
-      (with-handlers ([any/exc #|displayln|# void])
+      (with-handlers ([any/c #|displayln|# void])
         (print-crlf/encoding* "220 Racket FTP Server!")
         ;(sleep 1)
         (let loop ([request (read-request client-input-port)])
@@ -285,9 +284,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (let ([cmd (string-upcase (car (regexp-match #rx"[^ ]+" request)))]
                     [params (get-params request)])
                 (if user-logged
-                    (let ([fun (hash-ref cmd-voc cmd #f)])
-                      (if fun
-                          (fun params)
+                    (let ([rec (hash-ref cmd-voc cmd #f)])
+                      (if rec
+                          ((car rec) params)
                           (print-crlf/encoding* (format "502 ~a not implemented." cmd))))
                     (case (string->symbol cmd)
                       ((USER) (USER-COMMAND params))
@@ -365,7 +364,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (begin
             (kill-current-ftp-process)
             (print-crlf/encoding* "221 Goodbye.")
-            (raise 0))))
+            (raise 'quit))))
     
     (define (PWD-COMMAND params)
       (if params
@@ -402,6 +401,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (begin
             (print-crlf/encoding* "211-Extensions supported:")
             (print-crlf/encoding* " UTF8")
+            (print-crlf/encoding* " REST STREAM")
             (print-crlf/encoding* " MLST size*;modify*;perm")
             (print-crlf/encoding* " MLSD")
             (print-crlf/encoding* " SIZE")
@@ -410,7 +410,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     ;; Инициирует активный режим.
     (define (PORT-COMMAND params)
-      (with-handlers ([any/exc (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
+      (with-handlers ([any/c (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
         (unless (regexp-match #rx"^[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+$" params)
           (raise 'error))
         (let* ([l (regexp-split #rx"," params)]
@@ -424,7 +424,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     ;; Experimental
     (define (REST-COMMAND params)
-      (with-handlers ([any/exc (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
+      (with-handlers ([any/c (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
         (set! restart-marker (string->number (car (regexp-match #rx"^[0-9]+$" params))))))
     
     ;; Посылает клиенту список файлов директории.
@@ -1039,6 +1039,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                       passive-ports-from
                                       (add1 current-passive-port))))))
     
+    ;; Experimental
+    (define (HELP-COMMAND params)
+      (if params
+          (with-handlers ([any/c (λ (e) (print-crlf/encoding* (format "501 Unknown command ~a." params)))])
+            (print-crlf/encoding* (format "214 Syntax: ~a" (cdr (hash-ref cmd-voc (string-upcase params))))))
+          (begin
+            (print-crlf/encoding* "214-The following commands are recognized:")
+            (for-each (λ (rec) (print-crlf/encoding* (format " ~a" (car rec)))) cmd-list)
+            (print-crlf/encoding* "214 End"))))
+    
     (define (ftp-data-transfer data [file? #f])
       (case transfer-mode
         ((passive)
@@ -1055,8 +1065,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (parameterize ([current-custodian cust])
           (thread (λ ()
                     (parameterize ([current-custodian cust])
-                      (with-handlers ([any/exc (λ (e)
-                                                 (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
+                      (with-handlers ([any/c (λ (e)
+                                               (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
                         (let-values ([(in out) (tcp-connect (byte-host->string host) port)])
                           (print-crlf/encoding* (format "150 Opening ~a mode data connection." representation-type))
                           (if file?
@@ -1089,8 +1099,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (parameterize ([current-custodian cust])
           (thread (λ ()
                     (parameterize ([current-custodian cust])
-                      (with-handlers ([any/exc (λ (e)
-                                                 (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
+                      (with-handlers ([any/c (λ (e)
+                                               (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
                         (let ([listener (get-passive-listener port)])
                           (let-values ([(in out) (tcp-accept listener)])
                             (print-crlf/encoding* (format "150 Opening ~a mode data connection." representation-type))
@@ -1130,8 +1140,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (set! current-process cust)
         (parameterize ([current-custodian cust])
           (thread (λ ()
-                    (with-handlers ([any/exc (λ (e)
-                                               (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
+                    (with-handlers ([any/c (λ (e)
+                                             (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
@@ -1170,8 +1180,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (set! current-process cust)
         (parameterize ([current-custodian cust])
           (thread (λ ()
-                    (with-handlers ([any/exc (λ (e)
-                                               (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
+                    (with-handlers ([any/c (λ (e)
+                                             (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
@@ -1330,48 +1340,49 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        (if full-path? ftp-path name))))
     
     (define (init-cmd-voc)
-      (set! cmd-voc
-            (make-hash
-             `(("USER" . ,USER-COMMAND)
-               ("PASS" . ,PASS-COMMAND)
-               ("QUIT" . ,QUIT-COMMAND)
-               ("REIN" . ,REIN-COMMAND)
-               ("PWD"  . ,PWD-COMMAND)
-               ("XPWD" . ,PWD-COMMAND)
-               ("PORT" . ,PORT-COMMAND)
-               ("REST" . ,REST-COMMAND)
-               ("CWD"  . ,CWD-COMMAND)
-               ("XCWD" . ,CWD-COMMAND)
-               ("CDUP" . ,CDUP-COMMAND)
-               ("XCUP" . ,CDUP-COMMAND)
-               ("NLST" . ,(λ(params) (DIR-LIST params #t)))
-               ("LIST" . ,(λ(params) (DIR-LIST params)))
-               ("MLST" . ,MLST-COMMAND)
-               ("MLSD" . ,MLSD-COMMAND)
-               ("TYPE" . ,TYPE-COMMAND)
-               ("ABOR" . ,ABOR-COMMAND)
-               ("PASV" . ,PASV-COMMAND)
-               ("RETR" . ,RETR-COMMAND)
-               ("MKD"  . ,MKD-COMMAND)
-               ("XMKD" . ,MKD-COMMAND)
-               ("RMD"  . ,RMD-COMMAND)
-               ("XRMD" . ,RMD-COMMAND)
-               ("STOR" . ,STORE-FILE)
-               ("APPE" . ,(λ(params) (STORE-FILE params 'append)))
-               ("DELE" . ,DELE-COMMAND)
-               ("RNFR" . ,RNFR-COMMAND)
-               ("RNTO" . ,RNTO-COMMAND)
-               ("STOU" . ,STOU-FILE)
-               ("MDTM" . ,MDTM-COMMAND)
-               ("SIZE" . ,SIZE-COMMAND)
-               ("NOOP" . ,NOOP-COMMAND)
-               ("SITE" . ,SITE-COMMAND)
-               ("SYST" . ,SYST-COMMAND)
-               ("OPTS" . ,OPTS-COMMAND)
-               ("FEAT" . ,FEAT-COMMAND)
-               ("MODE" . ,MODE-COMMAND)
-               ("STRU" . ,STRU-COMMAND)
-               ))))
+      (set! cmd-list
+            `(("ABOR" ,ABOR-COMMAND . "ABOR")
+              ("APPE" ,(λ (params) (STORE-FILE params 'append)) . "APPE <SP> <pathname>")
+              ("CDUP" ,CDUP-COMMAND . "CDUP")
+              ("CWD" ,CWD-COMMAND . "CWD <SP> <pathname>")
+              ("DELE" ,DELE-COMMAND . "DELE <SP> <pathname>")
+              ("FEAT" ,FEAT-COMMAND . "FEAT")
+              ("HELP" ,HELP-COMMAND . "HELP [<SP> <string>]")
+              ("LIST" ,(λ (params) (DIR-LIST params)) . "LIST [<SP> <pathname>]")
+              ("MDTM" ,MDTM-COMMAND . "MDTM <SP> <pathname>")
+              ("MKD" ,MKD-COMMAND . "MKD <SP> <pathname>")
+              ("MLSD" ,MLSD-COMMAND . "MLSD [<SP> <pathname>]")
+              ("MLST" ,MLST-COMMAND . "MLST [<SP> <pathname>]")
+              ("MODE" ,MODE-COMMAND . "MODE <SP> <mode-code>")
+              ("NLST" ,(λ (params) (DIR-LIST params #t)) . "NLST [<SP> <pathname>]")
+              ("NOOP" ,NOOP-COMMAND . "NOOP")
+              ("OPTS" ,OPTS-COMMAND . "OPTS <SP> command-name [<SP> command-options]")
+              ("PASS" ,PASS-COMMAND . "PASS <SP> <password>")
+              ("PASV" ,PASV-COMMAND . "PASV")
+              ("PORT" ,PORT-COMMAND . "PORT <SP> <host-port>")
+              ("PWD" ,PWD-COMMAND . "PWD")
+              ("QUIT" ,QUIT-COMMAND . "QUIT")
+              ("REIN" ,REIN-COMMAND . "REIN")
+              ("REST" ,REST-COMMAND . "REST <SP> <marker>")
+              ("RETR" ,RETR-COMMAND . "RETR <SP> <pathname>")
+              ("RMD" ,RMD-COMMAND . "RMD <SP> <pathname>")
+              ("RNFR" ,RNFR-COMMAND . "RNFR <SP> <pathname>")
+              ("RNTO" ,RNTO-COMMAND . "RNTO <SP> <pathname>")
+              ("SITE" ,SITE-COMMAND . "SITE <SP> <string>")
+              ("SIZE" ,SIZE-COMMAND . "SIZE <SP> <pathname>")
+              ("STOR" ,STORE-FILE . "STOR <SP> <pathname>")
+              ("STOU" ,STOU-FILE . "STOU")
+              ("STRU" ,STRU-COMMAND . "STRU <SP> <structure-code>")
+              ("SYST" ,SYST-COMMAND . "SYST")
+              ("TYPE" ,TYPE-COMMAND . "TYPE <SP> <type-code>")
+              ("USER" ,USER-COMMAND . "USER <SP> <username>")
+              ("XCUP" ,CDUP-COMMAND . "XCUP")
+              ("XCWD" ,CWD-COMMAND . "XCWD <SP> <pathname>")
+              ("XMKD" ,MKD-COMMAND . "XMKD <SP> <pathname>")
+              ("XPWD" ,PWD-COMMAND . "XPWD")
+              ("XRMD" ,RMD-COMMAND . "XRMD <SP> <pathname>")))
+      
+      (set! cmd-voc (make-hash cmd-list)))
     
     (init-cmd-voc)
     (release-encoding-proc)
@@ -1470,7 +1481,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           reset)))
     
     (define/private (accept-client-request host input-port output-port reset-timer)
-      (with-handlers ([any/exc #|displayln|# void])
+      (with-handlers ([any/c #|displayln|# void])
         (send (new ftp-client% 
                    [client-host host]
                    [client-input-port input-port]
