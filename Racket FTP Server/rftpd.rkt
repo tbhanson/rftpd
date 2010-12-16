@@ -44,8 +44,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define server (new ftp:ftp-server%))
 
-(define-syntax (any/exc stx) #'void)
-
 (define (server-control [host "127.0.0.1"] [port 40600] [max-allow-wait 5])
   (let ([cust (make-custodian)])
     (parameterize ([current-custodian cust])
@@ -61,7 +59,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (parameterize ([current-custodian cust])
       (let-values ([(in out) (tcp-accept listener)])
         (thread (λ ()
-                  (with-handlers ([any/exc #|displayln|# void])
+                  (with-handlers ([any/c #|displayln|# void])
                     (eval-cmd in out))
                   (custodian-shutdown-all cust)))))))
 
