@@ -255,8 +255,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define user-logged #f)
     (define root-dir default-root-dir)
     (define current-dir "/")
-    (define transfer-mode 'active)
+    (define DTP 'active)
+    (define transfer-mode 'Stream)
     (define representation-type 'ASCII)
+    (define file-structure 'File)
     (define restart-marker #f)
     (define active-host-port (ftp-active-host-port (bytes 127 0 0 1) 20))
     (define passive-host-port (ftp-passive-host-port (bytes 127 0 0 1) 20))
@@ -418,17 +420,39 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             (string->number (third l)) (string->number (fourth l)))]
                [port (((string->number (fifth l)). * . 256). + .(string->number (sixth l)))])
           (when (port . > . 65535) (raise 'error))
-          (set! transfer-mode 'active)
+          (set! DTP 'active)
           (set! active-host-port (ftp-active-host-port host port))
-          (print-crlf/encoding* "200 Port command successful."))))
+          (print-crlf/encoding* "200 PORT command successful."))))
     
     ;; Experimental
     (define (REST-COMMAND params)
       (with-handlers ([any/c (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
         (set! restart-marker (string->number (car (regexp-match #rx"^[0-9]+$" params))))))
     
+    ;; Experimental
+    (define (ALLO-COMMAND params)
+      (if (params . and .(regexp-match #rx"^[0-9]+$" params))
+          (print-crlf/encoding* "200 ALLO command successful.")
+          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
+    
+    ;; Experimental
+    (define (STAT-COMMAND params)
+      (if params
+          (begin
+            (print-crlf/encoding* (format "213-Status of ~s:" params))
+            (DIR-LIST params #f #t)
+            (print-crlf/encoding* "213 End"))
+          (begin
+            (print-crlf/encoding* "211-Racket FTP Server status:")
+            (print-crlf/encoding* (format " Connected to ~a" client-host))
+            (print-crlf/encoding* (format " Logged in as ~a" user-id))
+            (print-crlf/encoding* (format " TYPE: ~a; STRU: ~a; MODE: ~a"
+                                          representation-type file-structure transfer-mode))
+            ; Print status of the operation in progress?
+            (print-crlf/encoding* "211 End"))))
+    
     ;; Посылает клиенту список файлов директории.
-    (define (DIR-LIST params [short? #f])
+    (define (DIR-LIST params [short? #f][control-channel #f])
       (local
         [(define (month->string m)
            (case m
@@ -491,13 +515,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                 (date-time->string d) " " spath "\n"]))
                                          "")))
                                  (directory-list full-dir-name)))])
-             (ftp-data-transfer (case representation-type
-                                  ((ASCII) dirlist)
-                                  ((Image) (list-string->bytes/locale-encoding dirlist))))))]
+             (if control-channel
+                 (print-crlf/encoding* dirlist)
+                 (ftp-data-transfer (case representation-type
+                                      ((ASCII) dirlist)
+                                      ((Image) (list-string->bytes/locale-encoding dirlist)))))))]
         
-        (let ([dir (if (and params (regexp-match #rx"[^-A-z]+.*" params))
-                       (regexp-match #rx"[^ ]+.*" (car (regexp-match #rx"[^-A-z]+.*" params)))
-                       #f)])
+        (let ([dir (if (and params (eq? (string-ref params 0) #\-))
+                       (substring (car (regexp-match #px"[^-\\w][^ \t-]+.*" params)) 1)
+                       params)])
           (cond
             ((not dir)
              (dlst current-dir))
@@ -1034,7 +1060,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        (bytes-ref host 0) (bytes-ref host 1) (bytes-ref host 2) (bytes-ref host 3)
                        h5 h6)))
             (set-ftp-passive-host-port-port! host-port current-passive-port)
-            (set! transfer-mode 'passive)
+            (set! DTP 'passive)
             (current-passive-port (if (>= current-passive-port passive-ports-to)
                                       passive-ports-from
                                       (add1 current-passive-port))))))
@@ -1050,7 +1076,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (print-crlf/encoding* "214 End"))))
     
     (define (ftp-data-transfer data [file? #f])
-      (case transfer-mode
+      (case DTP
         ((passive)
          (passive-data-transfer data file?))
         ((active)
@@ -1126,7 +1152,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (custodian-shutdown-all cust))))))
     
     (define (ftp-store-file new-file-full-path exists-mode)
-      (case transfer-mode
+      (case DTP
         ((passive)
          (passive-store-file new-file-full-path exists-mode))
         ((active)
@@ -1342,6 +1368,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (init-cmd-voc)
       (set! cmd-list
             `(("ABOR" ,ABOR-COMMAND . "ABOR")
+              ("ALLO" ,ALLO-COMMAND . "ALLO <SP> <decimal-integer>")
               ("APPE" ,(λ (params) (STORE-FILE params 'append)) . "APPE <SP> <pathname>")
               ("CDUP" ,CDUP-COMMAND . "CDUP")
               ("CWD" ,CWD-COMMAND . "CWD <SP> <pathname>")
@@ -1370,6 +1397,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("RNTO" ,RNTO-COMMAND . "RNTO <SP> <pathname>")
               ("SITE" ,SITE-COMMAND . "SITE <SP> <string>")
               ("SIZE" ,SIZE-COMMAND . "SIZE <SP> <pathname>")
+              ("STAT" ,STAT-COMMAND . "STAT [<SP> <pathname>]")
               ("STOR" ,STORE-FILE . "STOR <SP> <pathname>")
               ("STOU" ,STOU-FILE . "STOU")
               ("STRU" ,STRU-COMMAND . "STRU <SP> <structure-code>")
