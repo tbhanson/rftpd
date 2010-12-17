@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.0.16
+Racket FTP Server Library v1.0.17
 ----------------------------------------------------------------------
 
 Summary:
@@ -266,18 +266,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define rename-path #f)
     (define locale-encoding default-locale-encoding)
     (define mlst-features (ftp-mlst-features #t #t #f))
+    (define lang-list '(EN RU))
+    (define current-lang 'EN)
     
     (define print/locale-encoding #f)
     (define request-bytes->string/locale-encoding #f)
     (define list-string->bytes/locale-encoding #f)
     (define cmd-list null)
     (define cmd-voc #f)
+    (define server-responses #f)
     ;;
     ;; ---------- Public Methods ----------
     ;;
     (define/public (eval-client-request [reset-timer void])
       (with-handlers ([any/c #|displayln|# void])
-        (print-crlf/encoding* "220 Racket FTP Server!")
+        (print-crlf/encoding** 'WELCOME)
         ;(sleep 1)
         (let loop ([request (read-request client-input-port)])
           (unless (eof-object? request)
@@ -289,12 +292,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (let ([rec (hash-ref cmd-voc cmd #f)])
                       (if rec
                           ((car rec) params)
-                          (print-crlf/encoding* (format "502 ~a not implemented." cmd))))
+                          (print-crlf/encoding** 'CMD-NOT-IMPLEMENTED cmd)))
                     (case (string->symbol cmd)
                       ((USER) (USER-COMMAND params))
                       ((PASS) (PASS-COMMAND params))
                       ((QUIT) (QUIT-COMMAND params))
-                      (else (print-crlf/encoding* "530 Please login with USER and PASS."))))))
+                      (else (print-crlf/encoding** 'PLEASE-LOGIN))))))
             (reset-timer)
             (sleep .005)
             (loop (read-request client-input-port)))))
@@ -308,11 +311,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (let ([name params])
             (if (and (hash-ref ftp-users name #f)
                      (string=? (ftp-user-pass (hash-ref ftp-users name)) ""))
-                (print-crlf/encoding* "331 Anonymous login ok, send your complete email address as your password.")
-                (print-crlf/encoding* (format "331 Password required for ~a" name)))
+                (print-crlf/encoding** 'ANONYMOUS-LOGIN)
+                (print-crlf/encoding** 'PASSW-REQUIRED name))
             (set! user-id name))
           (begin
-            (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+            (print-crlf/encoding** 'SYNTAX-ERROR "")
             (set! user-id #f)))
       (set! user-logged #f))
     
@@ -325,28 +328,28 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (cond
                     ((not (hash-ref ftp-users user-id #f))
                      (print-log-event "Login incorrect.")
-                     (print-crlf/encoding* "530 Login incorrect.")
+                     (print-crlf/encoding** 'LOGIN-INCORRECT)
                      #f)
                     ((string=? (ftp-user-pass (hash-ref ftp-users user-id))
                                "")
                      (print-log-event "User logged in.")
-                     (print-crlf/encoding* "230 Anonymous access granted.")
+                     (print-crlf/encoding** 'ANONYMOUS-LOGGED)
                      #t)
                     ((not pass)
                      (print-log-event "Login incorrect.")
-                     (print-crlf/encoding* "530 Login incorrect.")
+                     (print-crlf/encoding** 'LOGIN-INCORRECT)
                      #f)
                     ((string=? (ftp-user-pass (hash-ref ftp-users user-id))
                                pass)
                      (print-log-event "User logged in.")
-                     (print-crlf/encoding* (format "230 User ~a logged in." user-id))
+                     (print-crlf/encoding** 'USER-LOGGED user-id)
                      #t)
                     (else
                      (print-log-event "Password incorrect.")
-                     (print-crlf/encoding* "530 Login incorrect.")
+                     (print-crlf/encoding** 'LOGIN-INCORRECT)
                      #f))))
                (else
-                (print-crlf/encoding* "530 Login incorrect.")
+                (print-crlf/encoding** 'LOGIN-INCORRECT)
                 #f))])
         (set! user-logged correct?)
         (when correct?
@@ -354,65 +357,72 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (REIN-COMMAND params)
       (if params
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (print-crlf/encoding** 'SYNTAX-ERROR "")
           (begin
             (set! user-id #f)
             (set! user-logged #f)
-            (print-crlf/encoding* "220 Service ready for new user."))))
+            (print-crlf/encoding** 'SERVICE-READY))))
     
     (define (QUIT-COMMAND params)
       (if params
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (print-crlf/encoding** 'SYNTAX-ERROR "")
           (begin
             (kill-current-ftp-process)
-            (print-crlf/encoding* "221 Goodbye.")
+            (print-crlf/encoding** 'QUIT)
             (raise 'quit))))
     
     (define (PWD-COMMAND params)
       (if params
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
-          (print-crlf/encoding* (format "257 ~s is current directory." current-dir))))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")
+          (print-crlf/encoding** 'CURRENT-DIR current-dir)))
     
     (define (CDUP-COMMAND params)
       (if params
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (print-crlf/encoding** 'SYNTAX-ERROR "")
           (begin
             (set! current-dir (simplify-ftp-path current-dir 1))
-            (print-crlf/encoding* "250 CDUP command successful."))))
+            (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "CDUP"))))
     
     (define (ABOR-COMMAND params)
       (if params
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (print-crlf/encoding** 'SYNTAX-ERROR "")
           (begin
             (kill-current-ftp-process)
-            (print-crlf/encoding* "226 Abort successful."))))
+            (print-crlf/encoding** 'ABORT))))
     
     (define (NOOP-COMMAND params)
       (if params
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
-          (print-crlf/encoding* "200 NOOP")))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")
+          (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "NOOP")))
     
     (define (SYST-COMMAND params)
       (if params
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
-          (print-crlf/encoding* "215 UNIX (Unix-like)")))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")
+          (print-crlf/encoding** 'SYSTEM)))
     
     (define (FEAT-COMMAND params)
       (if params
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (print-crlf/encoding** 'SYNTAX-ERROR "")
           (begin
-            (print-crlf/encoding* "211-Extensions supported:")
+            (print-crlf/encoding** 'FEAT-LIST)
+            (print-crlf/encoding* (string-append 
+                                   " LANG "
+                                   (string-join (map (λ(l) 
+                                                       (string-append (symbol->string l) 
+                                                                      (if (eq? l current-lang) "*" ""))) 
+                                                     lang-list)
+                                                ";")))
             (print-crlf/encoding* " UTF8")
             (print-crlf/encoding* " REST STREAM")
             (print-crlf/encoding* " MLST size*;modify*;perm")
             (print-crlf/encoding* " MLSD")
             (print-crlf/encoding* " SIZE")
             (print-crlf/encoding* " MDTM")
-            (print-crlf/encoding* "211 End"))))
+            (print-crlf/encoding** 'END 211))))
     
     ;; Инициирует активный режим.
     (define (PORT-COMMAND params)
-      (with-handlers ([any/c (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
+      (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR ""))])
         (unless (regexp-match #rx"^[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+$" params)
           (raise 'error))
         (let* ([l (regexp-split #rx"," params)]
@@ -422,37 +432,48 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (when (port . > . 65535) (raise 'error))
           (set! DTP 'active)
           (set! active-host-port (ftp-active-host-port host port))
-          (print-crlf/encoding* "200 PORT command successful."))))
+          (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "PORT"))))
     
     ;; Experimental
     (define (REST-COMMAND params)
-      (with-handlers ([any/c (λ (e) (print-crlf/encoding* "501 Syntax error in parameters or arguments."))])
-        (set! restart-marker (string->number (car (regexp-match #rx"^[0-9]+$" params))))))
+      (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR ""))])
+        (set! restart-marker (string->number (car (regexp-match #rx"^[0-9]+$" params))))
+        (print-crlf/encoding** 'RESTART)))
     
     ;; Experimental
     (define (ALLO-COMMAND params)
       (if (params . and .(regexp-match #rx"^[0-9]+$" params))
-          (print-crlf/encoding* "200 ALLO command successful.")
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
+          (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "ALLO")
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     ;; Experimental
     (define (STAT-COMMAND params)
       (if params
           (begin
-            (print-crlf/encoding* (format "213-Status of ~s:" params))
+            (print-crlf/encoding** 'STATUS-LIST params)
             (DIR-LIST params #f #t)
-            (print-crlf/encoding* "213 End"))
+            (print-crlf/encoding** 'END 213))
           (begin
-            (print-crlf/encoding* "211-Racket FTP Server status:")
-            (print-crlf/encoding* (format " Connected to ~a" client-host))
-            (print-crlf/encoding* (format " Logged in as ~a" user-id))
-            (print-crlf/encoding* (format " TYPE: ~a; STRU: ~a; MODE: ~a"
-                                          representation-type file-structure transfer-mode))
+            (print-crlf/encoding** 'STATUS-INFO-1)
+            (print-crlf/encoding** 'STATUS-INFO-2 client-host)
+            (print-crlf/encoding** 'STATUS-INFO-3 user-id)
+            (print-crlf/encoding** 'STATUS-INFO-4 representation-type file-structure transfer-mode)
             ; Print status of the operation in progress?
-            (print-crlf/encoding* "211 End"))))
+            (print-crlf/encoding** 'END 211))))
+    
+    ;; Experimental
+    (define (LANG-COMMAND params)
+      (if params
+          (let ([lang (string->symbol (string-upcase params))])
+            (if (memq lang lang-list)
+                (begin
+                  (set! current-lang lang)
+                  (print-crlf/encoding** 'SET-CMD 200 "LANG" current-lang))
+                (print-crlf/encoding** 'MISSING-PARAMS)))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     ;; Посылает клиенту список файлов директории.
-    (define (DIR-LIST params [short? #f][control-channel #f])
+    (define (DIR-LIST params [short? #f][status #f])
       (local
         [(define (month->string m)
            (case m
@@ -515,7 +536,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                 (date-time->string d) " " spath "\n"]))
                                          "")))
                                  (directory-list full-dir-name)))])
-             (if control-channel
+             (if status
                  (print-crlf/encoding* dirlist)
                  (ftp-data-transfer (case representation-type
                                       ((ASCII) dirlist)
@@ -530,11 +551,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             ((memq (string-ref dir 0) '(#\/ #\\))
              (if (ftp-dir-exists? (string-append root-dir dir))
                  (dlst dir)
-                 (print-crlf/encoding* "550 Directory not found.")))
+                 (unless status
+                   (print-crlf/encoding** 'DIR-NOT-FOUND))))
             ((ftp-dir-exists? (string-append root-dir current-dir "/" dir))
              (dlst (string-append current-dir "/" dir)))
             (else
-             (print-crlf/encoding* "550 Directory not found."))))))
+             (unless status
+               (print-crlf/encoding** 'DIR-NOT-FOUND)))))))
     
     ;; Отправляет клиенту копию файла.
     (define (RETR-COMMAND params)
@@ -543,20 +566,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         
         (cond
           ((not params)
-           (print-crlf/encoding* "501 Syntax error in parameters or arguments."))
+           (print-crlf/encoding** 'SYNTAX-ERROR ""))
           ((and (memq (string-ref params 0) '(#\/ #\\))
                 (ftp-file-exists? (string-append root-dir params)))
            (if (ftp-file-allow-read? (string-append root-dir params)
                                      current-ftp-user)
                (fcopy (string-append root-dir params))
-               (print-crlf/encoding* "550 Permission denied.")))
+               (print-crlf/encoding** 'PERM-DENIED)))
           ((ftp-file-exists? (string-append root-dir current-dir "/" params))
            (if (ftp-file-allow-read? (string-append root-dir current-dir "/" params)
                                      current-ftp-user)
                (fcopy (string-append root-dir current-dir "/" params))
-               (print-crlf/encoding* "550 Permission denied.")))
+               (print-crlf/encoding** 'PERM-DENIED)))
           (else
-           (print-crlf/encoding* "550 Directory not found.")))))
+           (print-crlf/encoding** 'DIR-NOT-FOUND)))))
     
     ;; Устанавливает тип передачи файла (реализован только A(текстовый) и I(бинарный)).
     (define (TYPE-COMMAND params)
@@ -564,54 +587,54 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (case (string->symbol (string-upcase (car (regexp-split #rx" +" params))))
             ((A)
              (set! representation-type 'ASCII)
-             (print-crlf/encoding* "200 Type set to A."))
+             (print-crlf/encoding** 'SET-CMD 200 "TYPE" representation-type))
             ((I)
              (set! representation-type 'Image)
-             (print-crlf/encoding* "200 Type set to I."))
+             (print-crlf/encoding** 'SET-CMD 200 "TYPE" representation-type))
             ((E L)
-             (print-crlf/encoding* "504 Command not implemented for that parameter."))
+             (print-crlf/encoding** 'MISSING-PARAMS))
             (else
-             (print-crlf/encoding* "501 Unsupported type. Supported types are I and A.")))
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
+             (print-crlf/encoding** 'UNSUPTYPE)))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     ;; Experimental
     (define (MODE-COMMAND params)
       (if params
           (case (string->symbol (string-upcase params))
             ((S)
-             (print-crlf/encoding* "200 Mode set to S."))
+             (print-crlf/encoding** 'SET-CMD 200 "MODE" transfer-mode))
             ((B C)
-             (print-crlf/encoding* "504 Command not implemented for that parameter."))
+             (print-crlf/encoding** 'MISSING-PARAMS))
             (else
-             (print-crlf/encoding* "501 Unknown MODE type.")))
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
+             (print-crlf/encoding** 'UNKNOWN-TYPE "MODE")))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     ;; Experimental
     (define (STRU-COMMAND params)
       (if params
           (case (string->symbol (string-upcase params))
             ((F)
-             (print-crlf/encoding* "200 FILE STRUCTURE set to F (no record structure)."))
+             (print-crlf/encoding** 'SET-CMD 200 "FILE STRUCTURE" file-structure))
             ((R P)
-             (print-crlf/encoding* "504 Command not implemented for that parameter."))
+             (print-crlf/encoding** 'MISSING-PARAMS))
             (else
-             (print-crlf/encoding* "501 Unknown FILE STRUCTURE type.")))
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
+             (print-crlf/encoding** 'UNKNOWN-TYPE "FILE STRUCTURE")))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     ;; Изменяет рабочую директорию (current-dir).
     (define (CWD-COMMAND params)
       (cond
         ((not params)
-         (print-crlf/encoding* "501 Syntax error in parameters or arguments."))
+         (print-crlf/encoding** 'SYNTAX-ERROR ""))
         ((and (memq (string-ref params 0) '(#\/ #\\))
               (ftp-dir-exists? (string-append root-dir params)))
          (set! current-dir (simplify-ftp-path params))
-         (print-crlf/encoding* "250 CWD command successful."))
+         (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "CWD"))
         ((ftp-dir-exists? (string-append root-dir current-dir "/" params))
          (set! current-dir (simplify-ftp-path (string-append current-dir "/" params)))
-         (print-crlf/encoding* "250 CWD command successful."))
+         (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "CWD"))
         (else
-         (print-crlf/encoding* "550 Directory not found."))))
+         (print-crlf/encoding** 'DIR-NOT-FOUND))))
     
     ;; Создает каталог.
     (define (MKD-COMMAND params)
@@ -620,13 +643,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [sp (string-append full-parent-path "/" dir-name)])
                   (if (ftp-dir-allow-write? full-parent-path user)
                       (if (ftp-dir-exists? sp)
-                          (print-crlf/encoding* "550 Can't create directory. Directory exist!")
+                          (print-crlf/encoding** 'DIR-EXIST)
                           (let* ([fpp (simplify-ftp-path ftp-parent-path)]
                                  [fp (string-append fpp (if (string=? fpp "/") "" "/") dir-name)])
                             (ftp-mkdir* sp (ftp-user-login user) (ftp-user-group user))
                             (print-log-event (format "Make directory ~a" fp))
-                            (print-crlf/encoding* (format "257 ~s - Directory successfully created." fp))))
-                      (print-crlf/encoding* "550 Can't create directory. Permission denied!"))))]
+                            (print-crlf/encoding** 'DIR-CREATED fp)))
+                      (print-crlf/encoding** 'DIR-PERM-DENIED))))]
         
         (if params
             (let* ([path (if (memq (string-ref params (sub1 (string-length params))) '(#\/ #\\))
@@ -641,21 +664,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    [user current-ftp-user])
               (cond
                 ((not dir-name)
-                 (print-crlf/encoding* "550 Can't create directory."))
+                 (print-crlf/encoding** 'CANT-CREATE-DIR))
                 ((and (not parent-path)
                       (ftp-dir-exists? (string-append root-dir current-dir "/" dir-name)))
-                 (print-crlf/encoding* "550 Can't create directory. Directory exist!"))
+                 (print-crlf/encoding** 'DIR-EXIST))
                 ((not parent-path)
                  (mkd current-dir dir-name user))
                 ((memq (string-ref parent-path 0) '(#\/ #\\))
                  (if (ftp-dir-exists? (string-append root-dir parent-path))
                      (mkd parent-path dir-name user)
-                     (print-crlf/encoding* "550 Can't create directory.")))
+                     (print-crlf/encoding** 'CANT-CREATE-DIR)))
                 ((ftp-dir-exists? (string-append root-dir current-dir "/" parent-path))
                  (mkd (string-append current-dir "/" parent-path) dir-name user))
                 (else
-                 (print-crlf/encoding* "550 Can't create directory."))))
-            (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
+                 (print-crlf/encoding** 'CANT-CREATE-DIR))))
+            (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
     ;; Удаляет каталог.
     (define (RMD-COMMAND params)
@@ -663,18 +686,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         [(define (rmd ftp-path)
            (let ([spath (string-append root-dir ftp-path)])
              (if ((file-or-directory-identity spath). = .(file-or-directory-identity root-dir))
-                 (print-crlf/encoding* "550 Directory not found.")
+                 (print-crlf/encoding** 'DIR-NOT-FOUND)
                  (if (ftp-dir-allow-delete-move? spath current-ftp-user)
                      (let ([lst (directory-list spath)])
                        (if (> (length lst) 1)
-                           (print-crlf/encoding* "550 Can't delete directory. Directory not empty!")
+                           (print-crlf/encoding** 'DELDIR-NOT-EMPTY)
                            (with-handlers ([exn:fail:filesystem? (λ (e)
                                                                    (print-crlf/encoding* "550 System error."))])
                              (delete-file (string-append spath "/.ftp-racket-directory"))
                              (delete-directory spath)
                              (print-log-event (format "Remove a directory ~a" (simplify-ftp-path ftp-path)))
-                             (print-crlf/encoding* "250 RMD command successful."))))
-                     (print-crlf/encoding* "550 Can't delete directory. Permission denied!")))))]
+                             (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RMD"))))
+                     (print-crlf/encoding** 'DELDIR-PERM-DENIED)))))]
         
         (cond
           ((and (memq (string-ref params 0) '(#\/ #\\))
@@ -683,7 +706,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           ((ftp-dir-exists? (string-append root-dir current-dir "/" params))
            (rmd (string-append current-dir "/" params)))
           (else
-           (print-crlf/encoding* "550 Directory not found.")))))
+           (print-crlf/encoding** 'DIR-NOT-FOUND)))))
     
     ;; Сохраняет файл.
     (define (STORE-FILE params [exists-mode 'truncate])
@@ -695,7 +718,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                (ftp-file-allow-write? real-path current-ftp-user)
                                #t))
                       (ftp-store-file real-path exists-mode)
-                      (print-crlf/encoding* "550 Can't store file. Permission denied!"))))]
+                      (print-crlf/encoding** 'STORE-FILE-PERM-DENIED))))]
         
         (if params
             (let* ([file-name (if (file-name-from-path params)
@@ -706,7 +729,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                     #f)])
               (cond
                 ((not file-name)
-                 (print-crlf/encoding* "550 Can't store file."))
+                 (print-crlf/encoding** 'CANT-STORE-FILE))
                 ((not parent-path)
                  (stor (string-append root-dir current-dir) file-name))
                 ((and (memq (string-ref parent-path 0) '(#\/ #\\))
@@ -715,14 +738,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 ((ftp-dir-exists? (string-append root-dir current-dir "/" parent-path))
                  (stor (string-append root-dir current-dir "/" parent-path) file-name))
                 (else
-                 (print-crlf/encoding* "550 Can't store file."))))
-            (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
+                 (print-crlf/encoding** 'CANT-STORE-FILE))))
+            (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
     ;; Experimental
     (define (STOU-FILE params)
       (cond
         (params
-         (print-crlf/encoding* "501 Syntax error in parameters or arguments."))
+         (print-crlf/encoding** 'SYNTAX-ERROR ""))
         ((ftp-dir-allow-write? (string-append root-dir current-dir) current-ftp-user)
          (let* ([file-name (let loop ([fname (gensym "noname")])
                              (if (ftp-file-exists? (string-append root-dir current-dir "/" fname))
@@ -731,7 +754,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [path (string-append root-dir current-dir "/" file-name)])
            (ftp-store-file path 'truncate)))
         (else
-         (print-crlf/encoding* "550 Can't store file. Permission denied!"))))
+         (print-crlf/encoding** 'STORE-FILE-PERM-DENIED))))
     
     ;; Удаляет файл.
     (define (DELE-COMMAND params)
@@ -744,8 +767,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    (delete-file (string-append spath ".ftp-racket-file"))
                    (delete-file spath)
                    (print-log-event (format "Delete a file ~a" (simplify-ftp-path ftp-path)))
-                   (print-crlf/encoding* "250 DELE command successful."))
-                 (print-crlf/encoding* "550 Can't delete file. Permission denied!"))))]
+                   (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "DELE"))
+                 (print-crlf/encoding** 'DELFILE-PERM-DENIED))))]
         
         (cond
           ((and (memq (string-ref params 0) '(#\/ #\\))
@@ -754,7 +777,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           ((ftp-file-exists? (string-append root-dir current-dir "/" params))
            (dele (string-append current-dir "/" params)))
           (else
-           (print-crlf/encoding* "550 File not found.")))))
+           (print-crlf/encoding** 'FILE-NOT-FOUND)))))
     
     ;; Эмулирует Unix команды.
     (define (SITE-COMMAND params)
@@ -779,8 +802,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                     (ftp-mksys-file (string-append full-path target)
                                                     (ftp-user-login user) (ftp-user-group user)
                                                     (get-permis permis))
-                                    (print-crlf/encoding* "200 SITE CHMOD command successful."))
-                                  (print-crlf/encoding* "550 CHMOD: Permission denied!"))))])
+                                    (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHMOD"))
+                                  (print-crlf/encoding** 'PERM-DENIED))))])
              (cond
                ((memq (string-ref path 0) '(#\/ #\\))
                 (cond
@@ -789,7 +812,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   ((ftp-dir-exists? (string-append root-dir path))
                    (fchmod (string-append root-dir path) "/.ftp-racket-directory"))
                   (else
-                   (print-crlf/encoding* "550 File or directory not found."))))
+                   (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
                ((ftp-file-exists? (string-append root-dir current-dir "/" path))
                 (fchmod (string-append root-dir
                                        current-dir "/" path) ".ftp-racket-file"))
@@ -797,7 +820,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (fchmod (string-append root-dir
                                        current-dir "/" path) "/.ftp-racket-directory"))
                (else
-                (print-crlf/encoding* "550 File or directory not found.")))))]
+                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))]
         
         (if params
             (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
@@ -809,10 +832,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        (let ([path (regexp-match #rx"[^ \t0-7]+.*" permis+tail)])
                          (if path
                              (chmod (string->list (car permis)) (car path))
-                             (print-crlf/encoding* "501 CHMOD: Syntax error in parameters or arguments.")))
-                       (print-crlf/encoding* "501 CHMOD: Syntax error in parameters or arguments."))))
-                (else (print-crlf/encoding* "504 Command not implemented for that parameter."))))
-            (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
+                             (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))
+                       (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:"))))
+                (else (print-crlf/encoding** 'MISSING-PARAMS))))
+            (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
     ;; Experimental
     (define (MDTM-COMMAND params)
@@ -823,11 +846,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             (print-crlf/encoding* (format "213 ~a"
                                                           (seconds->mdtm-time-format
                                                            (file-or-directory-modify-seconds path))))
-                            (print-crlf/encoding* "550 File or directory not found.")))])
+                            (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
             (if (memq (string-ref params 0) '(#\/ #\\))
                 (mdtm (string-append root-dir params))
                 (mdtm (string-append root-dir current-dir "/" params))))
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     ;; Experimental
     (define (SIZE-COMMAND params)
@@ -835,23 +858,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (let ([size (λ (path)
                         (if (ftp-file-exists? path)
                             (print-crlf/encoding* (format "213 ~a" (file-size path)))
-                            (print-crlf/encoding* "550 File not found.")))])
+                            (print-crlf/encoding** 'FILE-NOT-FOUND)))])
             (if (memq (string-ref params 0) '(#\/ #\\))
                 (size (string-append root-dir params))
                 (size (string-append root-dir current-dir "/" params))))
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     ;; Experimental
     (define (MLST-COMMAND params)
       (local [(define (mlst session ftp-path)
-                (print-crlf/encoding* "250- Listing")
+                (print-crlf/encoding** 'MLST-LISTING)
                 (print-crlf/encoding* (string-append " " (mlst-info session ftp-path)))
-                (print-crlf/encoding* "250 End"))]
+                (print-crlf/encoding** 'END 250))]
         (cond
           ((not params)
            (let ([path (string-append root-dir current-dir)])
              (if ((file-or-directory-identity path). = .(file-or-directory-identity root-dir))
-                 (print-crlf/encoding* "550 File or directory not found.")
+                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)
                  (mlst current-dir))))
           ((memq (string-ref params 0) '(#\/ #\\))
            (let ([path (string-append root-dir params)])
@@ -860,10 +883,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (mlst params))
                ((ftp-dir-exists? path)
                 (if ((file-or-directory-identity path). = .(file-or-directory-identity root-dir))
-                    (print-crlf/encoding* "550 File or directory not found.")
+                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)
                     (mlst params)))
                (else
-                (print-crlf/encoding* "550 File or directory not found.")))))
+                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
           (else
            (let ([path (string-append root-dir current-dir "/" params)])
              (cond
@@ -871,10 +894,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (mlst (string-append current-dir "/" params)))
                ((ftp-dir-exists? path)
                 (if ((file-or-directory-identity path). = .(file-or-directory-identity root-dir))
-                    (print-crlf/encoding* "550 File or directory not found.")
+                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)
                     (mlst (string-append current-dir "/" params))))
                (else
-                (print-crlf/encoding* "550 File or directory not found."))))))))
+                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))))))
     
     ;; Experimental
     (define (MLSD-COMMAND params)
@@ -902,12 +925,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (let ([path (string-append root-dir params)])
              (if (ftp-dir-exists? path)
                  (mlsd params)
-                 (print-crlf/encoding* "550 Directory not found."))))
+                 (print-crlf/encoding** 'DIR-NOT-FOUND))))
           (else
            (let ([path (string-append root-dir current-dir "/" params)])
              (if (ftp-dir-exists? path)
                  (mlsd (string-append current-dir "/" params))
-                 (print-crlf/encoding* "550 Directory not found.")))))))
+                 (print-crlf/encoding** 'DIR-NOT-FOUND)))))))
     
     
     ;; Experimental
@@ -921,13 +944,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (case (string->symbol (string-upcase (car mode)))
                        ((ON)
                         (set! locale-encoding "UTF-8")
-                        (print-crlf/encoding* "200 UTF8 mode enabled."))
+                        (print-crlf/encoding** 'UTF8-ON))
                        ((OFF)
                         (set! locale-encoding default-locale-encoding)
-                        (print-crlf/encoding* "200 UTF8 mode disabled."))
+                        (print-crlf/encoding** 'UTF8-OFF))
                        (else
-                        (print-crlf/encoding* "501 UTF8: Syntax error in parameters or arguments.")))
-                     (print-crlf/encoding* "501 UTF8: Syntax error in parameters or arguments."))
+                        (print-crlf/encoding** 'SYNTAX-ERROR "UTF8:")))
+                     (print-crlf/encoding** 'SYNTAX-ERROR "UTF8:"))
                  (release-encoding-proc)))
               ((MLST)
                (let ([modes (regexp-match #rx"[^ \t]+.+" (substring params 4))])
@@ -943,12 +966,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                            ((MODIFY) (set-ftp-mlst-features-modify?! features #t))
                                            ((PERM) (set-ftp-mlst-features-perm?! features #t))))
                                        mlst)
-                             (print-crlf/encoding* "200 MLST modes enabled."))
-                           (print-crlf/encoding*
-                            "501 MLST: Syntax error in parameters or arguments.")))
-                     (print-crlf/encoding* "501 MLST: Syntax error in parameters or arguments."))))
-              (else (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
+                             (print-crlf/encoding** 'MLST-ON))
+                           (print-crlf/encoding** 'SYNTAX-ERROR "MLST:")))
+                     (print-crlf/encoding** 'SYNTAX-ERROR "MLST:"))))
+              (else (print-crlf/encoding** 'SYNTAX-ERROR ""))))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     ;; Подготавливает к переименованию файл или каталог.
     (define (RNFR-COMMAND params)
@@ -962,31 +984,31 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (if (ftp-file-allow-delete-move? path1 current-ftp-user)
                       (begin
                         (set! rename-path path1)
-                        (print-crlf/encoding* "350 File or directory exists, ready for destination name."))
-                      (print-crlf/encoding* "550 Permission denied!")))
+                        (print-crlf/encoding** 'RENAME-OK))
+                      (print-crlf/encoding** 'PERM-DENIED)))
                  ((ftp-dir-exists? path1)
                   (if (ftp-dir-allow-delete-move? path1 current-ftp-user)
                       (begin
                         (set! rename-path path1)
-                        (print-crlf/encoding* "350 File or directory exists, ready for destination name."))
-                      (print-crlf/encoding* "550 Permission denied!")))
+                        (print-crlf/encoding** 'RENAME-OK))
+                      (print-crlf/encoding** 'PERM-DENIED)))
                  (else
-                  (print-crlf/encoding* "550 File or directory not found."))))
+                  (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
               ((ftp-file-exists? path2)
                (if (ftp-file-allow-delete-move? path2 current-ftp-user)
                    (begin
                      (set! rename-path path2)
-                     (print-crlf/encoding* "350 File or directory exists, ready for destination name."))
-                   (print-crlf/encoding* "550 Permission denied!")))
+                     (print-crlf/encoding** 'RENAME-OK))
+                   (print-crlf/encoding** 'PERM-DENIED)))
               ((ftp-dir-exists? path2)
                (if (ftp-dir-allow-delete-move? path2 current-ftp-user)
                    (begin
                      (set! rename-path path2)
-                     (print-crlf/encoding* "350 File or directory exists, ready for destination name."))
-                   (print-crlf/encoding* "550 Permission denied!")))
+                     (print-crlf/encoding** 'RENAME-OK))
+                   (print-crlf/encoding** 'PERM-DENIED)))
               (else
-               (print-crlf/encoding* "550 File or directory not found."))))
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")))
+               (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     ;; Переименовывает подготавленный файл или каталог.
     (define (RNTO-COMMAND params)
@@ -996,10 +1018,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       (if (if file?
                               (ftp-file-exists? new-path)
                               (ftp-dir-exists? new-path))
-                          (print-crlf/encoding* "550 File or directory exist!")
+                          (print-crlf/encoding** 'CANT-RENAME-EXIST)
                           (with-handlers ([exn:fail:filesystem?
-                                           (λ (e)
-                                             (print-crlf/encoding* "550 Can't rename file or directory."))])
+                                           (λ (e) (print-crlf/encoding** 'CANT-RENAME))])
                             (when file?
                               (rename-file-or-directory (string-append old-path ".ftp-racket-file")
                                                         (string-append new-path ".ftp-racket-file")))
@@ -1007,8 +1028,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             (print-log-event (format "Rename the file or directory from ~a to ~a"
                                                      (real-path->ftp-path old-path)
                                                      (real-path->ftp-path new-path)))
-                            (print-crlf/encoding* "250 Rename successful.")))
-                      (print-crlf/encoding* "550 Can't rename file or directory. Permission denied!"))))]
+                            (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RNTO")))
+                      (print-crlf/encoding** 'RENAME-PERM-DENIED))))]
         
         (if params
             (if rename-path
@@ -1029,12 +1050,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (cond
                     ((or (not name)
                          (and old-file? new-dir?))
-                     (print-crlf/encoding* "550 Can't rename file or directory."))
+                     (print-crlf/encoding** 'CANT-RENAME))
                     ((and (not parent-path)
                           (if old-file?
                               (ftp-file-exists? (string-append root-dir curr-dir "/" name))
                               (ftp-dir-exists? (string-append root-dir curr-dir "/" name))))
-                     (print-crlf/encoding* "550 File or directory exist!"))
+                     (print-crlf/encoding** 'CANT-RENAME-EXIST))
                     ((not parent-path)
                      (move old-file? old-path (string-append root-dir curr-dir) name user))
                     ((and (memq (string-ref parent-path 0) '(#\/ #\\))
@@ -1043,22 +1064,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     ((ftp-dir-exists? (string-append root-dir curr-dir "/" parent-path))
                      (move old-file? old-path (string-append root-dir curr-dir "/" parent-path) name user))
                     (else
-                     (print-crlf/encoding* "550 Can't rename file or directory.")))
+                     (print-crlf/encoding** 'CANT-RENAME)))
                   (set! rename-path #f))
-                (print-crlf/encoding* "503 Bad sequence of commands."))
-            (print-crlf/encoding* "501 Syntax error in parameters or arguments."))))
+                (print-crlf/encoding** 'RENAME-PERM-DENIED))
+            (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
     ;; Инициирует пассивный режим.
     (define (PASV-COMMAND params)
       (if params
-          (print-crlf/encoding* "501 Syntax error in parameters or arguments.")
+          (print-crlf/encoding** 'SYNTAX-ERROR "")
           (let* ([host-port passive-host-port]
                  [host (ftp-passive-host-port-host host-port)])
             (let-values ([(h5 h6) (quotient/remainder current-passive-port 256)])
-              (print-crlf/encoding*
-               (format "227 Entering Passive Mode (~a,~a,~a,~a,~a,~a)"
-                       (bytes-ref host 0) (bytes-ref host 1) (bytes-ref host 2) (bytes-ref host 3)
-                       h5 h6)))
+              (print-crlf/encoding** 'PASV
+                                     (bytes-ref host 0) (bytes-ref host 1) (bytes-ref host 2) (bytes-ref host 3)
+                                     h5 h6))
             (set-ftp-passive-host-port-port! host-port current-passive-port)
             (set! DTP 'passive)
             (current-passive-port (if (>= current-passive-port passive-ports-to)
@@ -1068,12 +1088,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; Experimental
     (define (HELP-COMMAND params)
       (if params
-          (with-handlers ([any/c (λ (e) (print-crlf/encoding* (format "501 Unknown command ~a." params)))])
-            (print-crlf/encoding* (format "214 Syntax: ~a" (cdr (hash-ref cmd-voc (string-upcase params))))))
+          (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'UNKNOWN-CMD params))])
+            (print-crlf/encoding** 'HELP (cdr (hash-ref cmd-voc (string-upcase params)))))
           (begin
-            (print-crlf/encoding* "214-The following commands are recognized:")
+            (print-crlf/encoding** 'HELP-LISTING)
             (for-each (λ (rec) (print-crlf/encoding* (format " ~a" (car rec)))) cmd-list)
-            (print-crlf/encoding* "214 End"))))
+            (print-crlf/encoding** 'END 214))))
     
     (define (ftp-data-transfer data [file? #f])
       (case DTP
@@ -1092,9 +1112,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (thread (λ ()
                     (parameterize ([current-custodian cust])
                       (with-handlers ([any/c (λ (e)
-                                               (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
+                                               (print-crlf/encoding** 'TRANSFER-ABORTED))])
                         (let-values ([(in out) (tcp-connect (byte-host->string host) port)])
-                          (print-crlf/encoding* (format "150 Opening ~a mode data connection." representation-type))
+                          (print-crlf/encoding** 'OPEN-DATA-CONNECTION representation-type)
                           (if file?
                               (call-with-input-file data
                                 (λ (in)
@@ -1108,7 +1128,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 ((Image)
                                  (write-bytes data out))))
                           (flush-output out)
-                          (print-crlf/encoding* "226 Transfer complete.")))
+                          (print-crlf/encoding** 'TRANSFER-OK)))
                       ;(displayln  "Process complete!" log-output-port)
                       (custodian-shutdown-all cust))))
           (thread (λ ()
@@ -1126,10 +1146,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (thread (λ ()
                     (parameterize ([current-custodian cust])
                       (with-handlers ([any/c (λ (e)
-                                               (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
+                                               (print-crlf/encoding** 'TRANSFER-ABORTED))])
                         (let ([listener (get-passive-listener port)])
                           (let-values ([(in out) (tcp-accept listener)])
-                            (print-crlf/encoding* (format "150 Opening ~a mode data connection." representation-type))
+                            (print-crlf/encoding** 'OPEN-DATA-CONNECTION representation-type)
                             (if file?
                                 (call-with-input-file data
                                   (λ (in)
@@ -1143,7 +1163,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                   ((Image)
                                    (write-bytes data out))))
                             (flush-output out)
-                            (print-crlf/encoding* "226 Transfer complete."))))
+                            (print-crlf/encoding** 'TRANSFER-OK))))
                       ;(displayln "Process complete!" log-output-port)
                       (custodian-shutdown-all cust))))
           (thread (λ ()
@@ -1167,7 +1187,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (parameterize ([current-custodian cust])
           (thread (λ ()
                     (with-handlers ([any/c (λ (e)
-                                             (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
+                                             (print-crlf/encoding** 'TRANSFER-ABORTED))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
@@ -1175,8 +1195,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                             (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
                           (parameterize ([current-custodian cust])
                             (let-values ([(in out) (tcp-connect (byte-host->string host) port)])
-                              (print-crlf/encoding* (format "150 Opening ~a mode data connection."
-                                                            representation-type))
+                              (print-crlf/encoding** 'OPEN-DATA-CONNECTION representation-type)
                               (when restart-marker
                                 (file-position fout restart-marker)
                                 (set! restart-marker #f))
@@ -1188,7 +1207,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (print-log-event (format "~a data to file ~a"
                                                        (if (eq? exists-mode 'append) "Append" "Store")
                                                        (real-path->ftp-path new-file-full-path)))
-                              (print-crlf/encoding* "226 Transfer complete."))))
+                              (print-crlf/encoding** 'TRANSFER-OK))))
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" log-output-port)
@@ -1207,7 +1226,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (parameterize ([current-custodian cust])
           (thread (λ ()
                     (with-handlers ([any/c (λ (e)
-                                             (print-crlf/encoding* "426 Connection closed; transfer aborted."))])
+                                             (print-crlf/encoding** 'TRANSFER-ABORTED))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
@@ -1216,8 +1235,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (parameterize ([current-custodian cust])
                             (let ([listener (get-passive-listener port)])
                               (let-values ([(in out) (tcp-accept listener)])
-                                (print-crlf/encoding* (format "150 Opening ~a mode data connection."
-                                                              representation-type))
+                                (print-crlf/encoding** 'OPEN-DATA-CONNECTION representation-type)
                                 (when restart-marker
                                   (file-position fout restart-marker)
                                   (set! restart-marker #f))
@@ -1229,7 +1247,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (print-log-event (format "~a data to file ~a"
                                                          (if (eq? exists-mode 'append) "Append" "Store")
                                                          (real-path->ftp-path new-file-full-path)))
-                                (print-crlf/encoding* "226 Transfer complete.")))))
+                                (print-crlf/encoding** 'TRANSFER-OK)))))
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" log-output-port)
@@ -1306,6 +1324,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (write-bytes #"\r\n" client-output-port)
       (flush-output client-output-port))
     
+    (define (print-crlf/encoding** response-tag . args)
+      (let ([response (cdr (assq current-lang (hash-ref server-responses response-tag)))])
+        (if (null? args)
+            (print/locale-encoding client-output-port response)
+            (print/locale-encoding client-output-port (apply format response args))))
+      (write-bytes #"\r\n" client-output-port)
+      (flush-output client-output-port))
+    
     (define (print-log-event msg [user-name? #t])
       (if user-name?
           (fprintf log-output-port
@@ -1375,6 +1401,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("DELE" ,DELE-COMMAND . "DELE <SP> <pathname>")
               ("FEAT" ,FEAT-COMMAND . "FEAT")
               ("HELP" ,HELP-COMMAND . "HELP [<SP> <string>]")
+              ("LANG" ,LANG-COMMAND . "LANG <SP> <lang-tag>")
               ("LIST" ,(λ (params) (DIR-LIST params)) . "LIST [<SP> <pathname>]")
               ("MDTM" ,MDTM-COMMAND . "MDTM <SP> <pathname>")
               ("MKD" ,MKD-COMMAND . "MKD <SP> <pathname>")
@@ -1383,7 +1410,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("MODE" ,MODE-COMMAND . "MODE <SP> <mode-code>")
               ("NLST" ,(λ (params) (DIR-LIST params #t)) . "NLST [<SP> <pathname>]")
               ("NOOP" ,NOOP-COMMAND . "NOOP")
-              ("OPTS" ,OPTS-COMMAND . "OPTS <SP> command-name [<SP> command-options]")
+              ("OPTS" ,OPTS-COMMAND . "OPTS <SP> <command-name> [<SP> <command-options>]")
               ("PASS" ,PASS-COMMAND . "PASS <SP> <password>")
               ("PASV" ,PASV-COMMAND . "PASV")
               ("PORT" ,PORT-COMMAND . "PORT <SP> <host-port>")
@@ -1410,7 +1437,123 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("XPWD" ,PWD-COMMAND . "XPWD")
               ("XRMD" ,RMD-COMMAND . "XRMD <SP> <pathname>")))
       
-      (set! cmd-voc (make-hash cmd-list)))
+      (set! cmd-voc (make-hash cmd-list))
+      
+      (set! server-responses
+            (make-hash
+             '((SYNTAX-ERROR (EN . "501 ~a Syntax error in parameters or arguments.")
+                             (RU . "501 ~a Синтаксическая ошибка (неверный параметр или аргумент)."))
+               (WELCOME (EN . "220 Racket FTP Server!")
+                        (RU . "220 Racket FTP Сервер!"))
+               (CMD-NOT-IMPLEMENTED (EN . "502 ~a not implemented.")
+                                    (RU . "502 Команда ~a не реализована."))
+               (PLEASE-LOGIN (EN . "530 Please login with USER and PASS.")
+                             (RU . "530 Пожалуйста авторизируйтесь используя USER и PASS."))
+               (ANONYMOUS-LOGIN (EN . "331 Anonymous login ok, send your complete email address as your password.")
+                                (RU . "331 Анонимный логин корректен, в качестве пароля используйте Ваш email."))
+               (PASSW-REQUIRED (EN . "331 Password required for ~a")
+                               (RU . "331 Введите пароль для пользователя ~a"))
+               (LOGIN-INCORRECT (EN . "530 Login incorrect.")
+                                (RU . "530 Вход не выполнен (введены не верные данные)."))
+               (ANONYMOUS-LOGGED (EN . "230 Anonymous access granted.")
+                                 (RU . "230 Доступ анонимному пользователю предоставлен."))
+               (USER-LOGGED (EN . "230 User ~a logged in.")
+                            (RU . "230 Пользователь ~a успешно прошел идентификацию."))
+               (SERVICE-READY (EN . "220 Service ready for new user.")
+                              (RU . "220 Служба подготовлена для следующей авторизации."))
+               (QUIT (EN . "221 Goodbye.") 
+                     (RU . "221 До свидания."))
+               (ABORT (EN . "226 Abort successful.") 
+                      (RU . "226 Текущая операция прервана."))
+               (SYSTEM (EN . "215 UNIX (Unix-like)") 
+                       (RU. "215 UNIX (Unix-подобная)"))
+               (CURRENT-DIR (EN . "257 ~s is current directory.")
+                            (RU . "257 ~s - текущий каталог."))
+               (CMD-SUCCESSFUL (EN . "~a ~a command successful.")
+                               (RU . "~a Команда ~a выполнена."))
+               (END (EN . "~a End") 
+                    (RU . "~a Конец"))
+               (FEAT-LIST (EN . "211-Extensions supported:") 
+                          (RU . "211-Поддерживаемые расширения:"))
+               (RESTART (EN . "350 Restart marker accepted.") 
+                        (RU . "350 Рестарт-маркер установлен."))
+               (STATUS-LIST (EN . "213-Status of ~s:")
+                            (RU . "213-Статус ~s:"))
+               (STATUS-INFO-1 (EN . "211-Racket FTP Server status:")
+                              (RU . "211-Статус Racket FTP Сервера:"))
+               (STATUS-INFO-2 (EN . " Connected to ~a")
+                              (RU . " Подключен к ~a"))
+               (STATUS-INFO-3 (EN . " Logged in as ~a")
+                              (RU . " Вы вошли как ~a"))
+               (STATUS-INFO-4 (EN . " TYPE: ~a; STRU: ~a; MODE: ~a")
+                              (RU . " TYPE: ~a; STRU: ~a; MODE: ~a"))
+               (SET-CMD (EN . "~a ~a set to ~a.")
+                        (RU . "~a ~a установлен в ~a."))
+               (MISSING-PARAMS (EN . "504 Command not implemented for that parameter.")
+                               (RU . "504 Команда не применима для такого параметра."))
+               (DIR-NOT-FOUND (EN . "550 Directory not found.")
+                              (RU . "550 Каталог отсутствует."))
+               (PERM-DENIED (EN . "550 Permission denied.")
+                            (RU . "Доступ запрещен."))
+               (UNSUPTYPE (EN . "501 Unsupported type. Supported types are I and A.")
+                          (RU . "501 Неподдерживаемый тип. Поддерживаемые типы I и А."))
+               (UNKNOWN-TYPE (EN . "501 Unknown ~a type.")
+                             (RU . "501 Неизвестный ~a тип."))
+               (DIR-EXIST (EN . "550 Can't create directory. Directory exist!")
+                          (RU . "550 Невозможно создать каталог. Каталог существует!"))
+               (DIR-CREATED (EN . "257 ~s - directory successfully created.")
+                            (RU . "257 ~s - создан каталог."))
+               (CREATE-DIR-PERM-DENIED (EN . "550 Can't create directory. Permission denied!")
+                                       (RU . "550 Невозможно создать каталог. Доступ запрещен!"))
+               (CANT-CREATE-DIR (EN . "550 Can't create directory.")
+                                (RU . "550 Невозможно создать каталог."))
+               (DELDIR-NOT-EMPTY (EN . "550 Can't delete directory. Directory not empty!")
+                                 (RU . "550 Не удается удалить каталог. Каталог не пуст!"))
+               (DELDIR-PERM-DENIED (EN . "550 Can't delete directory. Permission denied!")
+                                   (RU ."550 Не удается удалить каталог. Доступ запрещен!"))
+               (STORE-FILE-PERM-DENIED (EN . "550 Can't store file. Permission denied!")
+                                       (RU . "550 Невозможно сохранить файл. Доступ запрещен!"))
+               (CANT-STORE-FILE (EN . "550 Can't store file.")
+                                (RU . "550 Невозможно сохранить файл."))
+               (DELFILE-PERM-DENIED (EN . "550 Can't delete file. Permission denied!")
+                                    (RU . "550 Не удается удалить файл. Доступ запрещен!"))
+               (FILE-NOT-FOUND (EN . "550 File not found.")
+                               (RU . "550 Файл не найден."))
+               (FILE-DIR-NOT-FOUND (EN . "550 File or directory not found.")
+                                   (RU . "550 Файл или каталог отсутствует."))
+               (MLST-LISTING (EN . "250-Listing:")
+                             (RU . "250-Листинг:"))
+               (UTF8-ON (EN . "200 UTF8 mode enabled.")
+                        (RU . "200 Включен режим UTF8."))
+               (UTF8-OFF (EN . "200 UTF8 mode disabled.")
+                         (RU . "200 Отключен режим UTF8."))
+               (MLST-ON (EN . "200 MLST modes enabled.")
+                        (RU . "200 Включены все доступные MLST режимы."))
+               (RENAME-OK (EN . "350 File or directory exists, ready for destination name.")
+                          (RU . "350 Файл или каталог существует, ожидается переименование."))
+               (CANT-RENAME-EXIST (EN . "550 File or directory exist.")
+                                  (RU . "550 Обнаружен файл или каталог с подобным именем."))
+               (CANT-RENAME (EN . "550 Can't rename file or directory.")
+                            (RU . "550 Невозможно переименовать файл или каталог."))
+               (RENAME-PERM-DENIED (EN . "550 Can't rename file or directory. Permission denied!")
+                                   (RU . "550 Невозможно переименовать файл или каталог. Доступ запрещен!"))
+               (CMD-BAD-SEQ (EN . "503 Bad sequence of commands.")
+                            (RU . "503 Соблюдайте последовательность команд!"))
+               (PASV (EN . "227 Entering Passive Mode (~a,~a,~a,~a,~a,~a)")
+                     (RU . "227 Переход в пассивный режим (~a,~a,~a,~a,~a,~a)"))
+               (UNKNOWN-CMD (EN . "501 Unknown command ~a.")
+                            (RU . "501 Неизвестная команда ~a."))
+               (HELP (EN . "214 Syntax: ~a")
+                     (RU . "214 Синтаксис: ~a"))
+               (HELP-LISTING (EN . "214-The following commands are recognized:")
+                             (RU . "214-Реализованы следующие команды:"))
+               (TRANSFER-ABORTED (EN . "426 Connection closed; transfer aborted.")
+                                 (RU . "426 Соединение закрыто; передача прервана."))
+               (OPEN-DATA-CONNECTION (EN . "150 Opening ~a mode data connection.")
+                                     (RU . "150 Открыт ~a режим передачи данных."))
+               (TRANSFER-OK (EN . "226 Transfer complete.")
+                            (RU . "226 Передача завершена."))
+               ))))
     
     (init-cmd-voc)
     (release-encoding-proc)
