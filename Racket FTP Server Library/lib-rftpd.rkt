@@ -405,6 +405,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (print-crlf/encoding** 'SYNTAX-ERROR "")
           (begin
             (print-crlf/encoding** 'FEAT-LIST)
+            (print-crlf/encoding* " CLNT")
             (print-crlf/encoding* (string-append 
                                    " LANG "
                                    (string-join (map (λ(l) 
@@ -420,6 +421,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (print-crlf/encoding* " MDTM")
             (print-crlf/encoding* " TVFS")
             (print-crlf/encoding** 'END 211))))
+    
+    (define (CLNT-COMMAND params)
+      (if params
+          (print-crlf/encoding** 'CLNT)
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     ;; Инициирует активный режим.
     (define (PORT-COMMAND params)
@@ -1398,6 +1404,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("ALLO" ,ALLO-COMMAND . "ALLO <SP> <decimal-integer>")
               ("APPE" ,(λ (params) (STORE-FILE params 'append)) . "APPE <SP> <pathname>")
               ("CDUP" ,CDUP-COMMAND . "CDUP")
+              ("CLNT" ,CLNT-COMMAND . "CLNT <SP> <client-name>")
               ("CWD" ,CWD-COMMAND . "CWD <SP> <pathname>")
               ("DELE" ,DELE-COMMAND . "DELE <SP> <pathname>")
               ("FEAT" ,FEAT-COMMAND . "FEAT")
@@ -1554,6 +1561,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                      (RU . "150 Открыт ~a режим передачи данных."))
                (TRANSFER-OK (EN . "226 Transfer complete.")
                             (RU . "226 Передача завершена."))
+               (CLNT (EN . "200 Don't care.")
+                     (RU . "200 Не имеет значения."))
                ))))
     
     (init-cmd-voc)
