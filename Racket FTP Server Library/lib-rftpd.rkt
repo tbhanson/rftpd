@@ -418,6 +418,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (print-crlf/encoding* " MLSD")
             (print-crlf/encoding* " SIZE")
             (print-crlf/encoding* " MDTM")
+            (print-crlf/encoding* " TVFS")
             (print-crlf/encoding** 'END 211))))
     
     ;; Инициирует активный режим.
