@@ -7,7 +7,7 @@ Summary:
 This file is part of Racket FTP Server.
 
 License:
-Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>
+Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>
 All Rights Reserved
 
 This program is free software: you can redistribute it and/or modify

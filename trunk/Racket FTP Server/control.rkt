@@ -7,7 +7,7 @@ Summary:
 This file is part of Racket FTP Server.
 
 License:
-Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>
+Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>
 All Rights Reserved
 
 This program is free software: you can redistribute it and/or modify
@@ -30,6 +30,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          racket/list
          racket/tcp
          (for-syntax racket/base))
+
+(define-syntax (any/exc stx) #'void)
 
 (define name&version "Racket FTP Server Control Interface v1.0.4")
 (define copyright    "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>")
@@ -112,5 +114,3 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       (unless (eq? cmd '%exit)
                         (loop))))))))))))
     (custodian-shutdown-all cust)))
-
-(define-syntax (any/exc stx) #'void)
