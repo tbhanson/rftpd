@@ -38,11 +38,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (struct ftp-mlst-features (size? modify? perm?) #:mutable)
 
 (struct ftp-server-params 
-  (passive-ports-from
-   passive-ports-to
-   current-passive-port
+  (passive-ip4-ports-from
+   passive-ip4-ports-to
+   current-passive-ip4-port
    
-   passive-listeners
+   passive-ip6-ports-from
+   passive-ip6-ports-to
+   current-passive-ip6-port
+   
+   passive-ip4-listeners
+   passive-ip6-listeners
+   
+   server-ip4-host
+   server-ip6-host
    
    default-root-dir
    
@@ -63,22 +71,30 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define dead-process (make-custodian))
 
-(define (default-server-params)
-  (ftp-server-params 
-   40000                 ;passive-ports-from
-   40599                 ;passive-ports-to
-   40000                 ;current-passive-port
-   
-   #f                    ;passive-listeners
-   
-   "ftp-dir"             ;default-root-dir
-   
-   "UTF-8"               ;default-locale-encoding
-   
-   (current-output-port) ;log-output-port
-   
-   (make-hash)           ;ftp-users
-   ))
+;(define (default-server-params)
+;  (ftp-server-params 
+;   40000                 ;passive-ip4-ports-from
+;   40599                 ;passive-ip4-ports-to
+;   40000                 ;current-ip4-passive-port
+;   
+;   40000                 ;passive-ip6-ports-from
+;   40599                 ;passive-ip6-ports-to
+;   40000                 ;current-ip6-passive-port
+;   
+;   #f                    ;passive-ip4-listeners
+;   #f                    ;passive-ip6-listeners
+;   
+;   "127.0.0.1"           ;server-ip4-host
+;   "::1"                 ;server-ip6-host
+;   
+;   "ftp-dir"             ;default-root-dir
+;   
+;   "UTF-8"               ;default-locale-encoding
+;   
+;   (current-output-port) ;log-output-port
+;   
+;   (make-hash)           ;ftp-users
+;   ))
 
 
 (define ftp-utils%
@@ -245,10 +261,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (super-new)))
 
-(define ftp-client%
+(define ftp-session%
   (class ftp-utils%
     (inherit get-params
              IPv4?
+             IPv6?
              print/encoding
              list-string->bytes/encoding
              request-bytes->string/encoding
@@ -269,13 +286,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Definitions ----------
     ;;
-    (init-field client-host
-                client-input-port
-                client-output-port
-                [server-params (default-server-params)])
+    (init-field server-params
+                welcome-message)
     ;;
     ;; ---------- Private Definitions ----------
     ;;
+    (define *client-host* #f)
+    (define *client-input-port* #f)
+    (define *client-output-port* #f)
+    (define *current-protocol* #f)
     (define *user-id* #f)
     (define *user-logged* #f)
     (define *root-dir* default-root-dir)
@@ -286,7 +305,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define *file-structure* 'File)
     (define *restart-marker* #f)
     (define *active-host-port* (ftp-active-host&port "127.0.0.1" 20))
-    (define *passive-host-port* (ftp-passive-host&port "127.0.0.1" 20))
+    (define *passive-host4-port* (ftp-passive-host&port passive-ip4-host 20))
+    (define *passive-host6-port* (ftp-passive-host&port passive-ip6-host 20))
+    (define *passive-host-port* *passive-host4-port*)
+    (define get-passive-listener get-passive-ip4-listener)
     (define *current-process* dead-process)
     (define *rename-path* #f)
     (define *locale-encoding* default-locale-encoding)
@@ -303,14 +325,44 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (eval-client-request [reset-timer void])
+    (define/public (handle-client-request listener transfer-wait-time)
+      (let ([cust (make-custodian)])
+        (parameterize ([current-custodian cust])
+          (set!-values (*client-input-port* *client-output-port*) (tcp-accept listener))
+          (let-values ([(server-host client-host) (tcp-addresses *client-input-port*)])
+            (set! *client-host* client-host)
+            (set! *current-protocol* (if (IPv4? server-host) '|1| '|2|))
+            (thread (λ () 
+                      ;(fprintf log-output-port "[~a] Accept connection!\n" client-host)
+                      (accept-client-request (connect-shutdown transfer-wait-time cust client-host))
+                      ;(fprintf log-output-port "[~a] Connection close!\n" client-host)
+                      (custodian-shutdown-all cust)))))))
+    ;;
+    ;; ---------- Private Methods ----------
+    ;;
+    (define (connect-shutdown time connect-cust client-host)
+      (parameterize ([current-custodian connect-cust])
+        (let* ([tick time]
+               [reset (λ () (set! tick time))])
+          (thread (λ ()
+                    (let loop ()
+                      (when (> tick 0)
+                        (sleep 1)
+                        (set! tick (sub1 tick))
+                        (loop)))
+                    ;(fprintf log-output-port "[~a] Auto connection close!\n" client-host)
+                    ;421 No-transfer-time exceeded. Closing control connection.
+                    (custodian-shutdown-all connect-cust)))
+          reset)))
+    
+    (define (accept-client-request [reset-timer void])
       (with-handlers ([any/c #|displayln|# void])
-        (print-crlf/encoding** 'WELCOME)
+        (print-crlf/encoding** 'WELCOME welcome-message)
         ;(sleep 1)
-        (let loop ([request (read-request client-input-port)])
+        (let loop ([request (read-request *client-input-port*)])
           (unless (eof-object? request)
             (when request
-              ;(printf "[~a] ~a\n" client-host request)
+              ;(printf "[~a] ~a\n" *client-host* request)
               (let ([cmd (string-upcase (car (regexp-match #rx"[^ ]+" request)))]
                     [params (get-params request)])
                 (if *user-logged*
@@ -325,11 +377,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       (else (print-crlf/encoding** 'PLEASE-LOGIN))))))
             (reset-timer)
             (sleep .005)
-            (loop (read-request client-input-port)))))
-      (flush-output client-output-port))
-    ;;
-    ;; ---------- Private Methods ----------
-    ;;
+            (loop (read-request *client-input-port*)))))
+      (flush-output *client-output-port*))
+    
     ;; Возвращает идентификатор(имя) пользователя
     (define (USER-COMMAND params)
       (if params
@@ -438,6 +488,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                       (if (eq? l *current-lang*) "*" ""))) 
                                                      *lang-list*)
                                                 ";")))
+            (print-crlf/encoding* " EPRT")
+            (print-crlf/encoding* " EPSV")
             (print-crlf/encoding* " UTF8")
             (print-crlf/encoding* " REST STREAM")
             (print-crlf/encoding* " MLST size*;modify*;perm")
@@ -460,7 +512,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (let* ([l (regexp-split #rx"," params)]
                [host (string-append (first l) "." (second l) "." (third l) "." (fourth l))]
                [port (((string->number (fifth l)). * . 256). + .(string->number (sixth l)))])
-          (when (or (not (IPv4? host)) (port . > . 65535)) (raise 'error))
+          (when (or (not (IPv4? host)) (negative? port) (port . > . #xffff)) (raise 'error))
           (set! *DTP* 'active)
           (set! *active-host-port* (ftp-active-host&port host port))
           (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "PORT"))))
@@ -486,7 +538,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (print-crlf/encoding** 'END 213))
           (begin
             (print-crlf/encoding** 'STATUS-INFO-1)
-            (print-crlf/encoding** 'STATUS-INFO-2 client-host)
+            (print-crlf/encoding** 'STATUS-INFO-2 *client-host*)
             (print-crlf/encoding** 'STATUS-INFO-3 *user-id*)
             (print-crlf/encoding** 'STATUS-INFO-4 *representation-type* *file-structure* *transfer-mode*)
             ; Print status of the operation in progress?
@@ -1104,16 +1156,64 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (PASV-COMMAND params)
       (if params
           (print-crlf/encoding** 'SYNTAX-ERROR "")
-          (let* ([host-port *passive-host-port*]
-                 [host (ftp-passive-host&port-host host-port)])
+          (let ([host (ftp-passive-host&port-host *passive-host4-port*)])
             (let-values ([(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." host))]
-                         [(p1 p2) (quotient/remainder current-passive-port 256)])
+                         [(p1 p2) (quotient/remainder current-passive-ip4-port 256)])
               (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2))
-            (set-ftp-passive-host&port-port! host-port current-passive-port)
+            (set-ftp-passive-host&port-port! *passive-host4-port* current-passive-ip4-port)
             (set! *DTP* 'passive)
-            (current-passive-port (if (>= current-passive-port passive-ports-to)
-                                      passive-ports-from
-                                      (add1 current-passive-port))))))
+            (set! *passive-host-port* *passive-host4-port*)
+            (set! get-passive-listener get-passive-ip4-listener)
+            (current-passive-ip4-port (if (>= current-passive-ip4-port passive-ip4-ports-to)
+                                          passive-ip4-ports-from
+                                          (add1 current-passive-ip4-port))))))
+    
+    ;; Experimental
+    (define (EPRT-COMMAND params)
+      (if params
+          (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR "EPRT:"))])
+            (let*-values ([(t1 net-prt ip tcp-port t2) (apply values (regexp-split #rx"\\|" params))]
+                          [(prt port) (values (string->number net-prt) (string->number tcp-port))])
+              (unless (and (string=? t1 t2 "")
+                           (or (and (= prt 1) (IPv4? ip))
+                               (and (= prt 2) (IPv6? ip)))
+                           (positive? port)
+                           (port . <= . #xffff))
+                (raise 'syntax))
+              (set! *DTP* 'active)
+              (set! *active-host-port* (ftp-active-host&port ip port))
+              (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "EPRT")))
+          (print-crlf/encoding** 'SYNTAX-ERROR "EPRT:")))
+    
+    ;; Experimental
+    (define (EPSV-COMMAND params)
+      (local [(define (epsv-1)
+                (set! *DTP* 'passive)
+                (set-ftp-passive-host&port-port! *passive-host4-port* current-passive-ip4-port)
+                (set! *passive-host-port* *passive-host4-port*)
+                (set! get-passive-listener get-passive-ip4-listener)
+                (print-crlf/encoding** 'EPSV current-passive-ip4-port)
+                (current-passive-ip4-port (if (>= current-passive-ip4-port passive-ip4-ports-to)
+                                              passive-ip4-ports-from
+                                              (add1 current-passive-ip4-port))))
+              (define (epsv-2)
+                (set! *DTP* 'passive)
+                (set-ftp-passive-host&port-port! *passive-host6-port* current-passive-ip6-port)
+                (set! *passive-host-port* *passive-host6-port*)
+                (set! get-passive-listener get-passive-ip6-listener)
+                (print-crlf/encoding** 'EPSV current-passive-ip6-port)
+                (current-passive-ip6-port (if (>= current-passive-ip6-port passive-ip6-ports-to)
+                                              passive-ip6-ports-from
+                                              (add1 current-passive-ip6-port))))
+              (define (epsv)
+                (if (eq? *current-protocol* '|1|) (epsv-1) (epsv-2)))]
+        (if params
+            (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR "EPSV:"))])
+              (case (string->symbol (string-upcase (regexp-match #rx"1|2|[aA][lL][lL]" params)))
+                [(|1|) (epsv-1)]
+                [(|2|) (epsv-2)]
+                [(ALL) (epsv)]))
+            (epsv))))
     
     ;; Experimental
     (define (HELP-COMMAND params)
@@ -1287,14 +1387,29 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     ;(displayln "Auto kill working process!" log-output-port)
                     (custodian-shutdown-all cust))))))
     
-    (define-syntax (passive-ports-from stx)
-      #'(ftp-server-params-passive-ports-from server-params))
+    (define-syntax (passive-ip4-host stx)
+      #'(ftp-server-params-server-ip4-host server-params))
     
-    (define-syntax (passive-ports-to stx)
-      #'(ftp-server-params-passive-ports-to server-params))
+    (define-syntax (passive-ip6-host stx)
+      #'(ftp-server-params-server-ip6-host server-params))
     
-    (define-syntax (passive-listeners stx)
-      #'(ftp-server-params-passive-listeners server-params))
+    (define-syntax (passive-ip4-ports-from stx)
+      #'(ftp-server-params-passive-ip4-ports-from server-params))
+    
+    (define-syntax (passive-ip4-ports-to stx)
+      #'(ftp-server-params-passive-ip4-ports-to server-params))
+    
+    (define-syntax (passive-ip4-listeners stx)
+      #'(ftp-server-params-passive-ip4-listeners server-params))
+    
+    (define-syntax (passive-ip6-ports-from stx)
+      #'(ftp-server-params-passive-ip6-ports-from server-params))
+    
+    (define-syntax (passive-ip6-ports-to stx)
+      #'(ftp-server-params-passive-ip6-ports-to server-params))
+    
+    (define-syntax (passive-ip6-listeners stx)
+      #'(ftp-server-params-passive-ip6-listeners server-params))
     
     (define-syntax (default-root-dir stx)
       #'(ftp-server-params-default-root-dir server-params))
@@ -1314,13 +1429,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax (kill-current-ftp-process stx)
       #'(custodian-shutdown-all *current-process*))
     
-    (define-syntax (current-passive-port stx)
+    (define-syntax (current-passive-ip4-port stx)
       (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-current-passive-port! server-params expr)]
-        [_ #'(ftp-server-params-current-passive-port server-params)]))
+        [(_ expr) #'(set-ftp-server-params-current-passive-ip4-port! server-params expr)]
+        [_ #'(ftp-server-params-current-passive-ip4-port server-params)]))
     
-    (define (get-passive-listener port)
-      (vector-ref passive-listeners (- port passive-ports-from)))
+    (define-syntax (current-passive-ip6-port stx)
+      (syntax-case stx ()
+        [(_ expr) #'(set-ftp-server-params-current-passive-ip6-port! server-params expr)]
+        [_ #'(ftp-server-params-current-passive-ip6-port server-params)]))
+    
+    (define (get-passive-ip4-listener port)
+      (vector-ref passive-ip4-listeners (- port passive-ip4-ports-from)))
+    
+    (define (get-passive-ip6-listener port)
+      (vector-ref passive-ip6-listeners (- port passive-ip6-ports-from)))
     
     (define (read-request input-port)
       (if (byte-ready? input-port)
@@ -1346,24 +1469,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (set! list-string->bytes/locale-encoding (λ (str) (list-string->bytes/encoding *locale-encoding* str))))))
     
     (define (print-crlf/encoding* text)
-      (print/locale-encoding client-output-port text)
-      (write-bytes #"\r\n" client-output-port)
-      (flush-output client-output-port))
+      (print/locale-encoding *client-output-port* text)
+      (write-bytes #"\r\n" *client-output-port*)
+      (flush-output *client-output-port*))
     
     (define (print-crlf/encoding** response-tag . args)
       (let ([response (cdr (assq *current-lang* (hash-ref *server-responses* response-tag)))])
         (if (null? args)
-            (print/locale-encoding client-output-port response)
-            (print/locale-encoding client-output-port (apply format response args))))
-      (write-bytes #"\r\n" client-output-port)
-      (flush-output client-output-port))
+            (print/locale-encoding *client-output-port* response)
+            (print/locale-encoding *client-output-port* (apply format response args))))
+      (write-bytes #"\r\n" *client-output-port*)
+      (flush-output *client-output-port*))
     
     (define (print-log-event msg [user-name? #t])
       (if user-name?
           (fprintf log-output-port
-                   "~a [~a] ~a : ~a\n" (date->string (current-date) #t) client-host *user-id* msg)
+                   "~a [~a] ~a : ~a\n" (date->string (current-date) #t) *client-host* *user-id* msg)
           (fprintf log-output-port
-                   "~a [~a] ~a\n" (date->string (current-date) #t) client-host msg)))
+                   "~a [~a] ~a\n" (date->string (current-date) #t) *client-host* msg)))
     
     (define (seconds->mdtm-time-format seconds)
       (let ([dte (seconds->date (- seconds ftp-date-zone-offset))])
@@ -1426,6 +1549,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("CLNT" ,CLNT-COMMAND . "CLNT <SP> <client-name>")
               ("CWD" ,CWD-COMMAND . "CWD <SP> <pathname>")
               ("DELE" ,DELE-COMMAND . "DELE <SP> <pathname>")
+              ("EPRT" ,EPRT-COMMAND . "EPRT <SP> <d> <AF-number> <d> <ip-addr> <d> <port> <d>")
+              ("EPSV" ,EPSV-COMMAND . "EPSV [<SP> (<AF-number> | ALL)]")
               ("FEAT" ,FEAT-COMMAND . "FEAT")
               ("HELP" ,HELP-COMMAND . "HELP [<SP> <string>]")
               ("LANG" ,LANG-COMMAND . "LANG <SP> <lang-tag>")
@@ -1470,8 +1595,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (make-hash
              '((SYNTAX-ERROR (EN . "501 ~a Syntax error in parameters or arguments.")
                              (RU . "501 ~a Синтаксическая ошибка (неверный параметр или аргумент)."))
-               (WELCOME (EN . "220 Racket FTP Server!")
-                        (RU . "220 Racket FTP Сервер!"))
+               (WELCOME (EN . "220 ~a")
+                        (RU . "220 ~a"))
                (CMD-NOT-IMPLEMENTED (EN . "502 ~a not implemented.")
                                     (RU . "502 Команда ~a не реализована."))
                (PLEASE-LOGIN (EN . "530 Please login with USER and PASS.")
@@ -1506,8 +1631,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (RU . "350 Рестарт-маркер установлен."))
                (STATUS-LIST (EN . "213-Status of ~s:")
                             (RU . "213-Статус ~s:"))
-               (STATUS-INFO-1 (EN . "211-Racket FTP Server status:")
-                              (RU . "211-Статус Racket FTP Сервера:"))
+               (STATUS-INFO-1 (EN . "211-FTP Server status:")
+                              (RU . "211-Статус FTP Сервера:"))
                (STATUS-INFO-2 (EN . " Connected to ~a")
                               (RU . " Подключен к ~a"))
                (STATUS-INFO-3 (EN . " Logged in as ~a")
@@ -1567,7 +1692,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                (CMD-BAD-SEQ (EN . "503 Bad sequence of commands.")
                             (RU . "503 Соблюдайте последовательность команд!"))
                (PASV (EN . "227 Entering Passive Mode (~a,~a,~a,~a,~a,~a)")
-                     (RU . "227 Переход в пассивный режим (~a,~a,~a,~a,~a,~a)"))
+                     (RU . "227 Переход в Пассивный Режим (~a,~a,~a,~a,~a,~a)"))
                (UNKNOWN-CMD (EN . "501 Unknown command ~a.")
                             (RU . "501 Неизвестная команда ~a."))
                (HELP (EN . "214 Syntax: ~a")
@@ -1582,6 +1707,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             (RU . "226 Передача завершена."))
                (CLNT (EN . "200 Don't care.")
                      (RU . "200 Не имеет значения."))
+               (EPSV (EN . "229 Entering Extended Passive Mode (|||~a|)")
+                     (RU . "229 Переход в Расширенный Пассивный Режим (|||~a|)"))
                ))))
     
     (init-cmd-voc)
@@ -1596,30 +1723,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Definitions ----------
     ;;
+    (init-field [welcome-message         "Racket FTP Server!"]
+                [server-ip4-host         "127.0.0.1"]
+                [server-ip4-port         21]
+                [server-ip6-host         "::1"]
+                [server-ip6-port         21]
+                [max-allow-wait          50]
+                [transfer-wait-time      120]
+                
+                [passive-ip4-ports-from  40000]
+                [passive-ip4-ports-to    40599]
+                [passive-ip6-ports-from  40000]
+                [passive-ip6-ports-to    40599]
+                
+                [default-root-dir        "ftp-dir"]
+                [default-locale-encoding "UTF-8"]
+                [log-output-port         (current-output-port)])
     ;;
     ;; ---------- Private Definitions ----------
     ;;
-    (define server-params (default-server-params))
+    (define server-params #f)
     (define server-custodian (make-parameter #f))
+    (define server-ftp-users (make-hash))
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (set-passive-ports from to)
-      (set-ftp-server-params-passive-ports-from! server-params from)
-      (set-ftp-server-params-passive-ports-to! server-params to))
-    
-    (define/public (set-default-locale-encoding encoding)
-      (set-ftp-server-params-default-locale-encoding! server-params encoding))
-    
-    (define/public (set-default-root-dir dir)
-      (set-ftp-server-params-default-root-dir! server-params dir))
-    
-    (define/public (set-log-output-port output-port)
-      (set-ftp-server-params-log-output-port! server-params output-port))
-    
     (define/public (add-ftp-user full-name login pass group home-dirs [root-dir default-root-dir])
       (let ([root-dir (get-params* #rx".+" root-dir)])
-        (hash-set! ftp-users login (ftp-user full-name login pass group home-dirs root-dir))
+        (hash-set! server-ftp-users login (ftp-user full-name login pass group home-dirs root-dir))
         (init-ftp-dirs root-dir)
         (for-each (λ (home-dir)
                     (unless (ftp-dir-exists? (string-append root-dir home-dir))
@@ -1635,17 +1766,47 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (ftp-mkdir* (string-append root-dir home-dir) login group))))
                   home-dirs)))
     
-    (define/public (run [port 21] [max-allow-wait 50] [host "127.0.0.1"])
+    (define/public (clear-ftp-users)
+      (set! server-ftp-users (make-hash)))
+    
+    (define/public (run)
       (unless (server-custodian)
         (server-custodian (make-custodian))
+        (set! server-params (ftp-server-params passive-ip4-ports-from
+                                               passive-ip4-ports-to
+                                               passive-ip4-ports-from  ;current-passive-ip4-port
+                                               passive-ip6-ports-from
+                                               passive-ip6-ports-to 
+                                               passive-ip6-ports-from  ;current-passive-ip6-port
+                                               #f                      ;passive-ip4-listeners
+                                               #f                      ;passive-ip6-listeners
+                                               server-ip4-host
+                                               server-ip6-host
+                                               default-root-dir
+                                               default-locale-encoding
+                                               log-output-port
+                                               server-ftp-users))      ;ftp-users
         (init-ftp-dirs default-root-dir)
-        (init-passive-listeners (server-custodian) host)
+        (init-passive-listeners (server-custodian))
         (parameterize ([current-custodian (server-custodian)])
-          (letrec ([listener (tcp-listen port max-allow-wait #t host)]
-                   [main-loop (λ ()
-                                (handle-client-request listener)
-                                (main-loop))])
-            (thread main-loop)))))
+          (when server-ip4-host
+            (letrec ([listener (tcp-listen server-ip4-port max-allow-wait #t server-ip4-host)]
+                     [main-loop (λ ()
+                                  (send (new ftp-session% 
+                                             [server-params server-params]
+                                             [welcome-message welcome-message])
+                                        handle-client-request listener transfer-wait-time)
+                                  (main-loop))])
+              (thread main-loop)))
+          (when server-ip6-host
+            (letrec ([listener (tcp-listen server-ip6-port max-allow-wait #t server-ip6-host)]
+                     [main-loop (λ ()
+                                  (send (new ftp-session% 
+                                             [server-params server-params]
+                                             [welcome-message welcome-message])
+                                        handle-client-request listener transfer-wait-time)
+                                  (main-loop))])
+              (thread main-loop))))))
     
     (define/public (stop)
       (when (server-custodian)
@@ -1654,66 +1815,33 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Private Methods ----------
     ;;
-    (define/private (handle-client-request listener)
-      (let ([cust (make-custodian)])
-        (parameterize ([current-custodian cust])
-          (let-values ([(in out) (tcp-accept listener)])
-            (thread (λ ()
-                      (let-values ([(server-host client-host) (tcp-addresses in)])
-                        ;(fprintf log-output-port "[~a] Accept connection!\n" client-host)
-                        (accept-client-request client-host in out (connect-shutdown 60 cust client-host))
-                        ;(fprintf log-output-port "[~a] Connection close!\n" client-host)
-                        )
-                      (custodian-shutdown-all cust)))))))
-    
-    (define/private (connect-shutdown time connect-cust client-host)
-      (parameterize ([current-custodian connect-cust])
-        (let* ([tick time]
-               [reset (λ () (set! tick time))])
-          (thread (λ ()
-                    (let loop ()
-                      (when (> tick 0)
-                        (sleep 1)
-                        (set! tick (sub1 tick))
-                        (loop)))
-                    ;(fprintf log-output-port "[~a] Auto connection close!\n" client-host)
-                    (custodian-shutdown-all connect-cust)))
-          reset)))
-    
-    (define/private (accept-client-request host input-port output-port reset-timer)
-      (with-handlers ([any/c #|displayln|# void])
-        (send (new ftp-client% 
-                   [client-host host]
-                   [client-input-port input-port]
-                   [client-output-port output-port]
-                   [server-params server-params])
-              eval-client-request reset-timer))
-      (flush-output output-port))
-    
     (define/private (init-ftp-dirs root-dir)
       (unless (ftp-dir-exists? root-dir)
         (ftp-mkdir* root-dir)))
     
-    (define/private (init-passive-listeners server-custodian host)
+    (define/private (init-passive-listeners server-custodian)
       (parameterize ([current-custodian server-custodian])
-        (passive-listeners (build-vector (- (add1 passive-ports-to) passive-ports-from)
-                                         (λ (n) (tcp-listen (passive-ports-from . + . n) 1 #t host))))))
+        (when passive-ip4-host
+          (passive-ip4-listeners (build-vector (- (add1 passive-ip4-ports-to) passive-ip4-ports-from)
+                                               (λ (n) (tcp-listen (passive-ip4-ports-from . + . n) 
+                                                                  1 #t passive-ip4-host)))))
+        (when passive-ip6-host
+          (passive-ip6-listeners (build-vector (- (add1 passive-ip6-ports-to) passive-ip6-ports-from)
+                                               (λ (n) (tcp-listen (passive-ip6-ports-from . + . n) 
+                                                                  1 #t passive-ip6-host)))))))
     
-    (define-syntax (passive-listeners stx)
+    (define-syntax (passive-ip4-host stx) #'server-ip4-host)
+    
+    (define-syntax (passive-ip6-host stx) #'server-ip6-host)
+    
+    (define-syntax (passive-ip4-listeners stx)
       (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-passive-listeners! server-params expr)]
-        [_ #'(ftp-server-params-passive-listeners server-params)]))
+        [(_ expr) #'(set-ftp-server-params-passive-ip4-listeners! server-params expr)]
+        [_ #'(ftp-server-params-passive-ip4-listeners server-params)]))
     
-    (define-syntax (passive-ports-from stx)
-      #'(ftp-server-params-passive-ports-from server-params))
-    
-    (define-syntax (passive-ports-to stx)
-      #'(ftp-server-params-passive-ports-to server-params))
-    
-    (define-syntax (ftp-users stx)
-      #'(ftp-server-params-ftp-users server-params))
-    
-    (define-syntax (default-root-dir stx)
-      #'(ftp-server-params-default-root-dir server-params))
+    (define-syntax (passive-ip6-listeners stx)
+      (syntax-case stx ()
+        [(_ expr) #'(set-ftp-server-params-passive-ip6-listeners! server-params expr)]
+        [_ #'(ftp-server-params-passive-ip6-listeners server-params)]))
     
     (super-new)))
