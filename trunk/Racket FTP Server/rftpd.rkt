@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.0.10
+Racket FTP Server v1.0.11
 ----------------------------------------------------------------------
 
 Summary:
@@ -32,16 +32,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [name&version "Racket FTP Server v1.0.10"]
+    (init-field [name&version "Racket FTP Server v1.0.11"]
                 [copyright "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 
                 [server-host "127.0.0.1"]
                 [server-port 21]
                 [server-max-allow-wait 50]
                 
+                [passive-ports '(40000 . 40599)]
+                
                 [control-passwd "12345"]
                 [control-host "127.0.0.1"]
                 [control-port 40600]
+                
+                [default-locale-encoding "UTF-8"]
+                [default-root-dir        "ftp-dir"]
                 
                 [log-file "logs/ftp.log"]
                 [config-file "conf/ftp.config"]
@@ -55,12 +60,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Public Methods ----------
     ;;
     (define/public (start)
-      (set! server (new ftp:ftp-server%))
       (load-config)
-      (load-users)
       (unless log-out
         (set! log-out (open-output-file log-file #:exists 'append)))
-      (send server set-log-output-port log-out)
+      (set! server (new ftp:ftp-server% 
+                        [welcome-message name&version]
+                        [server-ip4-host server-host]
+                        [server-ip4-port server-port]
+                        [max-allow-wait server-max-allow-wait]
+                        [passive-ip4-ports-from (car passive-ports)]
+                        [passive-ip4-ports-to (cdr passive-ports)]
+                        [default-root-dir default-root-dir]
+                        [default-locale-encoding default-locale-encoding]
+                        [log-output-port log-out]))
+      (load-users)
       (displayln name&version)
       (displayln copyright) (newline)
       (run)
@@ -123,7 +136,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                (next (read input-port))))))))
     
     (define/private (run)
-      (send server run server-port server-max-allow-wait server-host)
+      (send server run)
       (displayln "Server running!"))
     
     (define/private (stop)
@@ -144,11 +157,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             ((max-allow-wait)
                              (set! server-max-allow-wait (second param)))
                             ((passive-ports)
-                             (send server set-passive-ports (second param) (third param)))
+                             (set! passive-ports (cons (second param) (third param))))
                             ((default-locale-encoding)
-                             (send server set-default-locale-encoding (second param)))
+                             (set! default-locale-encoding (second param)))
                             ((default-root-dir)
-                             (send server set-default-root-dir (second param)))
+                             (set! default-root-dir (second param)))
                             ((log-file)
                              (when log-out (close-output-port log-out))
                              (set! log-out (open-output-file (second param) #:exists 'append)))
