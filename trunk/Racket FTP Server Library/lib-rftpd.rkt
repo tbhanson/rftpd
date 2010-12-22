@@ -305,9 +305,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define *file-structure* 'File)
     (define *restart-marker* #f)
     (define *active-host-port* (ftp-active-host&port "127.0.0.1" 20))
-    (define *passive-host4-port* (ftp-passive-host&port passive-ip4-host 20))
-    (define *passive-host6-port* (ftp-passive-host&port passive-ip6-host 20))
-    (define *passive-host-port* *passive-host4-port*)
+    (define *passive-ip4-host&port* (ftp-passive-host&port passive-ip4-host 20))
+    (define *passive-ip6-host&port* (ftp-passive-host&port passive-ip6-host 20))
+    (define *passive-host-port* *passive-ip4-host&port*)
     (define get-passive-listener get-passive-ip4-listener)
     (define *current-process* dead-process)
     (define *rename-path* #f)
@@ -1156,13 +1156,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (PASV-COMMAND params)
       (if params
           (print-crlf/encoding** 'SYNTAX-ERROR "")
-          (let ([host (ftp-passive-host&port-host *passive-host4-port*)])
+          (let ([host (ftp-passive-host&port-host *passive-ip4-host&port*)])
             (let-values ([(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." host))]
                          [(p1 p2) (quotient/remainder current-passive-ip4-port 256)])
               (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2))
-            (set-ftp-passive-host&port-port! *passive-host4-port* current-passive-ip4-port)
+            (set-ftp-passive-host&port-port! *passive-ip4-host&port* current-passive-ip4-port)
             (set! *DTP* 'passive)
-            (set! *passive-host-port* *passive-host4-port*)
+            (set! *passive-host-port* *passive-ip4-host&port*)
             (set! get-passive-listener get-passive-ip4-listener)
             (current-passive-ip4-port (if (>= current-passive-ip4-port passive-ip4-ports-to)
                                           passive-ip4-ports-from
@@ -1188,28 +1188,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; Experimental
     (define (EPSV-COMMAND params)
       (local [(define (epsv-1)
-                (set! *DTP* 'passive)
-                (set-ftp-passive-host&port-port! *passive-host4-port* current-passive-ip4-port)
-                (set! *passive-host-port* *passive-host4-port*)
-                (set! get-passive-listener get-passive-ip4-listener)
-                (print-crlf/encoding** 'EPSV current-passive-ip4-port)
-                (current-passive-ip4-port (if (>= current-passive-ip4-port passive-ip4-ports-to)
-                                              passive-ip4-ports-from
-                                              (add1 current-passive-ip4-port))))
+                (if passive-ip4-host
+                    (begin
+                      (set! *DTP* 'passive)
+                      (set-ftp-passive-host&port-port! *passive-ip4-host&port* current-passive-ip4-port)
+                      (set! *passive-host-port* *passive-ip4-host&port*)
+                      (set! get-passive-listener get-passive-ip4-listener)
+                      (print-crlf/encoding** 'EPSV current-passive-ip4-port)
+                      (current-passive-ip4-port (if (>= current-passive-ip4-port passive-ip4-ports-to)
+                                                    passive-ip4-ports-from
+                                                    (add1 current-passive-ip4-port))))
+                    (print-crlf/encoding** 'BAD-PROTOCOL)))
               (define (epsv-2)
-                (set! *DTP* 'passive)
-                (set-ftp-passive-host&port-port! *passive-host6-port* current-passive-ip6-port)
-                (set! *passive-host-port* *passive-host6-port*)
-                (set! get-passive-listener get-passive-ip6-listener)
-                (print-crlf/encoding** 'EPSV current-passive-ip6-port)
-                (current-passive-ip6-port (if (>= current-passive-ip6-port passive-ip6-ports-to)
-                                              passive-ip6-ports-from
-                                              (add1 current-passive-ip6-port))))
+                (if passive-ip6-host
+                    (begin
+                      (set! *DTP* 'passive)
+                      (set-ftp-passive-host&port-port! *passive-ip6-host&port* current-passive-ip6-port)
+                      (set! *passive-host-port* *passive-ip6-host&port*)
+                      (set! get-passive-listener get-passive-ip6-listener)
+                      (print-crlf/encoding** 'EPSV current-passive-ip6-port)
+                      (current-passive-ip6-port (if (>= current-passive-ip6-port passive-ip6-ports-to)
+                                                    passive-ip6-ports-from
+                                                    (add1 current-passive-ip6-port))))
+                    (print-crlf/encoding** 'BAD-PROTOCOL)))
               (define (epsv)
                 (if (eq? *current-protocol* '|1|) (epsv-1) (epsv-2)))]
         (if params
             (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR "EPSV:"))])
-              (case (string->symbol (string-upcase (regexp-match #rx"1|2|[aA][lL][lL]" params)))
+              (case (string->symbol (string-upcase (car (regexp-match #rx"1|2|[aA][lL][lL]" params))))
                 [(|1|) (epsv-1)]
                 [(|2|) (epsv-2)]
                 [(ALL) (epsv)]))
@@ -1540,7 +1546,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        " "
                        (if full-path? ftp-path name))))
     
-    (define (init-cmd-voc)
+    (define (init)
       (set! *cmd-list*
             `(("ABOR" ,ABOR-COMMAND . "ABOR")
               ("ALLO" ,ALLO-COMMAND . "ALLO <SP> <decimal-integer>")
@@ -1549,8 +1555,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("CLNT" ,CLNT-COMMAND . "CLNT <SP> <client-name>")
               ("CWD" ,CWD-COMMAND . "CWD <SP> <pathname>")
               ("DELE" ,DELE-COMMAND . "DELE <SP> <pathname>")
-              ("EPRT" ,EPRT-COMMAND . "EPRT <SP> <d> <AF-number> <d> <ip-addr> <d> <port> <d>")
-              ("EPSV" ,EPSV-COMMAND . "EPSV [<SP> (<AF-number> | ALL)]")
+              ("EPRT" ,EPRT-COMMAND . "EPRT <SP> <d> <address-family> <d> <ip-addr> <d> <port> <d>")
+              ("EPSV" ,EPSV-COMMAND . "EPSV [<SP> (<address-family> | ALL)]")
               ("FEAT" ,FEAT-COMMAND . "FEAT")
               ("HELP" ,HELP-COMMAND . "HELP [<SP> <string>]")
               ("LANG" ,LANG-COMMAND . "LANG <SP> <lang-tag>")
@@ -1709,9 +1715,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (RU . "200 Не имеет значения."))
                (EPSV (EN . "229 Entering Extended Passive Mode (|||~a|)")
                      (RU . "229 Переход в Расширенный Пассивный Режим (|||~a|)"))
-               ))))
+               (BAD-PROTOCOL (EN . "522 Bad network protocol.")
+                             (RU . "522 Неверный сетевой протокол."))))))
     
-    (init-cmd-voc)
+    (init)
     (release-encoding-proc)
     (super-new)))
 

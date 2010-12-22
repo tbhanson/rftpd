@@ -35,11 +35,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (init-field [name&version "Racket FTP Server v1.0.11"]
                 [copyright "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 
-                [server-host "127.0.0.1"]
-                [server-port 21]
+                [server-ip4-host "127.0.0.1"]
+                [server-ip4-port 21]
+                [server-ip6-host "::1"]
+                [server-ip6-port 21]
                 [server-max-allow-wait 50]
                 
-                [passive-ports '(40000 . 40599)]
+                [passive-ip4-ports '(40000 . 40599)]
+                [passive-ip6-ports '(40000 . 40599)]
                 
                 [control-passwd "12345"]
                 [control-host "127.0.0.1"]
@@ -65,11 +68,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (set! log-out (open-output-file log-file #:exists 'append)))
       (set! server (new ftp:ftp-server% 
                         [welcome-message name&version]
-                        [server-ip4-host server-host]
-                        [server-ip4-port server-port]
+                        [server-ip4-host server-ip4-host]
+                        [server-ip4-port server-ip4-port]
+                        [server-ip6-host server-ip6-host]
+                        [server-ip6-port server-ip6-port]
                         [max-allow-wait server-max-allow-wait]
-                        [passive-ip4-ports-from (car passive-ports)]
-                        [passive-ip4-ports-to (cdr passive-ports)]
+                        [passive-ip4-ports-from (car passive-ip4-ports)]
+                        [passive-ip4-ports-to (cdr passive-ip4-ports)]
+                        [passive-ip6-ports-from (car passive-ip6-ports)]
+                        [passive-ip6-ports-to (cdr passive-ip6-ports)]
                         [default-root-dir default-root-dir]
                         [default-locale-encoding default-locale-encoding]
                         [log-output-port log-out]))
@@ -150,14 +157,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (when (eq? (car conf) 'ftp-server-config)
               (for-each (λ (param)
                           (case (car param)
-                            ((host)
-                             (set! server-host (second param)))
-                            ((port)
-                             (set! server-port (second param)))
+                            ((ip4-host)
+                             (set! server-ip4-host (second param)))
+                            ((ip6-host)
+                             (set! server-ip6-host (second param)))
+                            ((ip4-port)
+                             (set! server-ip4-port (second param)))
+                            ((ip6-port)
+                             (set! server-ip6-port (second param)))
                             ((max-allow-wait)
                              (set! server-max-allow-wait (second param)))
-                            ((passive-ports)
-                             (set! passive-ports (cons (second param) (third param))))
+                            ((passive-ip4-ports)
+                             (set! passive-ip4-ports (cons (second param) (third param))))
+                            ((passive-ip6-ports)
+                             (set! passive-ip6-ports (cons (second param) (third param))))
                             ((default-locale-encoding)
                              (set! default-locale-encoding (second param)))
                             ((default-root-dir)
