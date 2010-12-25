@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Control Interface v1.0.4
+Racket FTP Server Control Interface v1.0.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -28,12 +28,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (require racket/cmdline
          racket/list
-         racket/tcp
+         (file "lib-ssl.rkt")
          (for-syntax racket/base))
 
 (define-syntax (any/exc stx) #'void)
 
-(define name&version "Racket FTP Server Control Interface v1.0.4")
+(define name&version "Racket FTP Server Control Interface v1.0.5")
 (define copyright    "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>")
 (define help-msg     "Type 'help' or '?' for help.")
 
@@ -74,7 +74,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           ((control-passwd)
                            (control-passwd (second param)))))
                       (cdr conf)))))
-      (let-values ([(in out) (tcp-connect (control-host) (control-port))])
+      (let-values ([(in out) (ssl-connect (control-host) (control-port) 'sslv3)])
         (displayln (control-passwd) out)(flush-output out)
         (when (string=? (read-line in) "Ok")
           (cond
