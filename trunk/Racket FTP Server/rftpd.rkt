@@ -26,7 +26,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #lang racket
 
-(require (prefix-in ftp: (file "lib-rftpd.rkt")))
+(require (file "lib-ssl.rkt")
+         (prefix-in ftp: (file "lib-rftpd.rkt")))
 
 (define racket-ftp-server%
   (class object%
@@ -35,10 +36,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (init-field [name&version "Racket FTP Server v1.0.11"]
                 [copyright "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 
-                [server-ip4-host "127.0.0.1"]
-                [server-ip4-port 21]
-                [server-ip6-host "::1"]
-                [server-ip6-port 21]
+                [server-ip4-host        "127.0.0.1"]
+                [server-ip4-port        21]
+                [server-ip4-encryption  #f]
+                [server-ip4-certificate "certs/ip4.pem"]
+                
+                [server-ip6-host        "::1"]
+                [server-ip6-port        21]
+                [server-ip6-encryption  #f]
+                [server-ip6-certificate "certs/ip6.pem"]
+                
                 [server-max-allow-wait 50]
                 
                 [passive-ip4-ports '(40000 . 40599)]
@@ -52,6 +59,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [default-root-dir        "ftp-dir"]
                 
                 [log-file "logs/ftp.log"]
+                [control-cert-file "certs/control.pem"]
                 [config-file "conf/ftp.config"]
                 [users-file "conf/ftp.users"])
     
@@ -70,8 +78,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         [welcome-message name&version]
                         [server-ip4-host server-ip4-host]
                         [server-ip4-port server-ip4-port]
+                        [server-ip4-encryption server-ip4-encryption]
+                        [server-ip4-certificate server-ip4-certificate]
                         [server-ip6-host server-ip6-host]
                         [server-ip6-port server-ip6-port]
+                        [server-ip6-encryption server-ip6-encryption]
+                        [server-ip6-certificate server-ip6-certificate]
                         [max-allow-wait server-max-allow-wait]
                         [passive-ip4-ports-from (car passive-ip4-ports)]
                         [passive-ip4-ports-to (cdr passive-ip4-ports)]
@@ -84,27 +96,29 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (displayln name&version)
       (displayln copyright) (newline)
       (run)
-      (server-control control-host control-port)
+      (server-control)
       (let loop ()
         (sleep 60)
         (loop)))
     ;;
     ;; ---------- Private Methods ----------
     ;;
-    (define/private (server-control [host "127.0.0.1"] [port 40600] [max-allow-wait 5])
+    (define/private (server-control)
       (let ([cust (make-custodian)])
         (parameterize ([current-custodian cust])
-          (letrec ([listener (tcp-listen port max-allow-wait #t host)]
-                   [main-loop (λ ()
-                                (handle-client-request listener)
-                                (main-loop))])
-            (thread main-loop)))
+          (let ([listener (ssl-listen control-port (random 123456789) #t control-host 'sslv3)])
+            (ssl-load-certificate-chain! listener control-cert-file)
+            (ssl-load-private-key! listener control-cert-file)
+            (letrec ([main-loop (λ ()
+                                  (handle-client-request listener)
+                                  (main-loop))])
+              (thread main-loop))))
         (set! control-custodian cust)))
     
     (define/private (handle-client-request listener)
       (let ([cust (make-custodian)])
         (parameterize ([current-custodian cust])
-          (let-values ([(in out) (tcp-accept listener)])
+          (let-values ([(in out) (ssl-accept listener)])
             (thread (λ ()
                       (with-handlers ([any/c #|displayln|# void])
                         (eval-cmd in out))
@@ -157,14 +171,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (when (eq? (car conf) 'ftp-server-config)
               (for-each (λ (param)
                           (case (car param)
-                            ((ip4-host)
-                             (set! server-ip4-host (second param)))
-                            ((ip6-host)
-                             (set! server-ip6-host (second param)))
-                            ((ip4-port)
-                             (set! server-ip4-port (second param)))
-                            ((ip6-port)
-                             (set! server-ip6-port (second param)))
+                            ((server-ip4)
+                             (with-handlers ([any/c void])
+                               (set! server-ip4-host (second param))
+                               (set! server-ip4-port (third param))
+                               (set! server-ip4-encryption (fourth param))))
+                            ((server-ip4-certificate)
+                             (set! server-ip4-certificate (second param)))
+                            ((server-ip6)
+                             (with-handlers ([any/c void])
+                               (set! server-ip6-host (second param))
+                               (set! server-ip6-port (third param))
+                               (set! server-ip6-encryption (fourth param))))
+                            ((server-ip6-certificate)
+                             (set! server-ip6-certificate (second param)))
                             ((max-allow-wait)
                              (set! server-max-allow-wait (second param)))
                             ((passive-ip4-ports)
@@ -178,12 +198,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             ((log-file)
                              (when log-out (close-output-port log-out))
                              (set! log-out (open-output-file (second param) #:exists 'append)))
-                            ((control-host)
-                             (set! control-host (second param)))
-                            ((control-port)
-                             (set! control-port (second param)))
+                            ((control-server)
+                             (with-handlers ([any/c void])
+                               (set! control-host (second param))
+                               (set! control-port (third param))))
                             ((control-passwd)
-                             (set! control-passwd (second param)))))
+                             (set! control-passwd (second param)))
+                            ((control-certificate)
+                             (set! control-cert-file (second param)))))
                         (cdr conf)))))))
     
     (define/private (load-users)

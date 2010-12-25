@@ -28,29 +28,32 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (require racket/date
          (prefix-in srfi/19: srfi/19)
+         (file "lib-ssl.rkt")
          srfi/48)
 
 (provide ftp-server%)
 
 (struct ftp-user (full-name login pass group home-dirs root-dir))
-(struct ftp-active-host&port (host port))
-(struct ftp-passive-host&port (host port) #:mutable)
+(struct ftp-host&port (host port))
 (struct ftp-mlst-features (size? modify? perm?) #:mutable)
 
 (struct ftp-server-params 
   (passive-ip4-ports-from
    passive-ip4-ports-to
-   current-passive-ip4-port
+   free-passive-ip4-port
    
    passive-ip6-ports-from
    passive-ip6-ports-to
-   current-passive-ip6-port
-   
-   passive-ip4-listeners
-   passive-ip6-listeners
+   free-passive-ip6-port
    
    server-ip4-host
    server-ip6-host
+   
+   server-ip4-encryption
+   server-ip6-encryption
+   
+   server-ip4-certificate
+   server-ip6-certificate
    
    default-root-dir
    
@@ -68,33 +71,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ;;
 (define ftp-run-date (srfi/19:current-date))
 (define ftp-date-zone-offset (srfi/19:date-zone-offset ftp-run-date))
-
-(define dead-process (make-custodian))
-
-;(define (default-server-params)
-;  (ftp-server-params 
-;   40000                 ;passive-ip4-ports-from
-;   40599                 ;passive-ip4-ports-to
-;   40000                 ;current-ip4-passive-port
-;   
-;   40000                 ;passive-ip6-ports-from
-;   40599                 ;passive-ip6-ports-to
-;   40000                 ;current-ip6-passive-port
-;   
-;   #f                    ;passive-ip4-listeners
-;   #f                    ;passive-ip6-listeners
-;   
-;   "127.0.0.1"           ;server-ip4-host
-;   "::1"                 ;server-ip6-host
-;   
-;   "ftp-dir"             ;default-root-dir
-;   
-;   "UTF-8"               ;default-locale-encoding
-;   
-;   (current-output-port) ;log-output-port
-;   
-;   (make-hash)           ;ftp-users
-;   ))
 
 
 (define ftp-utils%
@@ -287,7 +263,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Public Definitions ----------
     ;;
     (init-field server-params
-                welcome-message)
+                welcome-message
+                encryption)
     ;;
     ;; ---------- Private Definitions ----------
     ;;
@@ -304,12 +281,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define *representation-type* 'ASCII)
     (define *file-structure* 'File)
     (define *restart-marker* #f)
-    (define *active-host-port* (ftp-active-host&port "127.0.0.1" 20))
-    (define *passive-ip4-host&port* (ftp-passive-host&port passive-ip4-host 20))
-    (define *passive-ip6-host&port* (ftp-passive-host&port passive-ip6-host 20))
-    (define *passive-host-port* *passive-ip4-host&port*)
-    (define get-passive-listener get-passive-ip4-listener)
-    (define *current-process* dead-process)
+    (define *active-host&port* (ftp-host&port "127.0.0.1" 20))
+    (define *passive-host&port* (ftp-host&port passive-ip4-host free-passive-ip4-port))
+    (define *current-process* (make-custodian))
     (define *rename-path* #f)
     (define *locale-encoding* default-locale-encoding)
     (define *mlst-features* (ftp-mlst-features #t #t #f))
@@ -319,6 +293,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define print/locale-encoding #f)
     (define request-bytes->string/locale-encoding #f)
     (define list-string->bytes/locale-encoding #f)
+    (define net-accept (if encryption ssl-accept tcp-accept))
+    (define net-addresses (if encryption ssl-addresses tcp-addresses))
+    (define net-connect (if encryption (λ(host port) (ssl-connect host port encryption)) tcp-connect))
+    (define net-close (if encryption ssl-close tcp-close))
+    (define net-abandon-port (if encryption ssl-abandon-port tcp-abandon-port))
     (define *cmd-list* null)
     (define *cmd-voc* #f)
     (define *server-responses* #f)
@@ -327,16 +306,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     (define/public (handle-client-request listener transfer-wait-time)
       (let ([cust (make-custodian)])
-        (parameterize ([current-custodian cust])
-          (set!-values (*client-input-port* *client-output-port*) (tcp-accept listener))
-          (let-values ([(server-host client-host) (tcp-addresses *client-input-port*)])
-            (set! *client-host* client-host)
-            (set! *current-protocol* (if (IPv4? server-host) '|1| '|2|))
-            (thread (λ () 
-                      ;(fprintf log-output-port "[~a] Accept connection!\n" client-host)
-                      (accept-client-request (connect-shutdown transfer-wait-time cust client-host))
-                      ;(fprintf log-output-port "[~a] Connection close!\n" client-host)
-                      (custodian-shutdown-all cust)))))))
+        (with-handlers ([any/c (λ(e) 
+                                 (when *client-output-port*
+                                   (close-output-port *client-output-port*));ssl required
+                                 (custodian-shutdown-all cust))])
+          (parameterize ([current-custodian cust])
+            (set!-values (*client-input-port* *client-output-port*) (net-accept listener))
+            (let-values ([(server-host client-host) (net-addresses *client-input-port*)])
+              (set! *client-host* client-host)
+              (set! *current-protocol* (if (IPv4? server-host) '|1| '|2|))
+              (thread (λ () 
+                        ;(fprintf log-output-port "[~a] Accept connection!\n" client-host)
+                        (accept-client-request (connect-shutdown transfer-wait-time cust client-host))
+                        ;(fprintf log-output-port "[~a] Connection close!\n" client-host)
+                        (close-output-port *client-output-port*);ssl required
+                        (custodian-shutdown-all cust))))))))
     ;;
     ;; ---------- Private Methods ----------
     ;;
@@ -352,6 +336,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (loop)))
                     ;(fprintf log-output-port "[~a] Auto connection close!\n" client-host)
                     ;421 No-transfer-time exceeded. Closing control connection.
+                    (close-output-port *client-output-port*);ssl required
                     (custodian-shutdown-all connect-cust)))
           reset)))
     
@@ -488,8 +473,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                       (if (eq? l *current-lang*) "*" ""))) 
                                                      *lang-list*)
                                                 ";")))
-            (print-crlf/encoding* " EPRT")
-            (print-crlf/encoding* " EPSV")
+            ;(print-crlf/encoding* " EPRT")
+            ;(print-crlf/encoding* " EPSV")
             (print-crlf/encoding* " UTF8")
             (print-crlf/encoding* " REST STREAM")
             (print-crlf/encoding* " MLST size*;modify*;perm")
@@ -504,6 +489,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (print-crlf/encoding** 'CLNT)
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
+    (define (PROT-COMMAND params)
+      (if params
+          (print-crlf/encoding* "200 Protection level set to P")
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
+    
+    (define (PBSZ-COMMAND params)
+      (if params
+          (print-crlf/encoding* "200 PBSZ=0")
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
+    
     ;; Инициирует активный режим.
     (define (PORT-COMMAND params)
       (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR ""))])
@@ -514,7 +509,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                [port (((string->number (fifth l)). * . 256). + .(string->number (sixth l)))])
           (when (or (not (IPv4? host)) (negative? port) (port . > . #xffff)) (raise 'error))
           (set! *DTP* 'active)
-          (set! *active-host-port* (ftp-active-host&port host port))
+          (set! *active-host&port* (ftp-host&port host port))
           (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "PORT"))))
     
     ;; Experimental
@@ -626,7 +621,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                       ((Image) (list-string->bytes/locale-encoding dirlist)))))))]
         
         (let ([dir (if (and params (eq? (string-ref params 0) #\-))
-                       (substring (car (regexp-match #px"[^-\\w][^ \t-]+.*" params)) 1)
+                       (let ([d (regexp-match #px"[^-\\w][^ \t-]+.*" params)])
+                         (if d (substring (car d) 1) #f))
                        params)])
           (cond
             ((not dir)
@@ -1156,17 +1152,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (PASV-COMMAND params)
       (if params
           (print-crlf/encoding** 'SYNTAX-ERROR "")
-          (let ([host (ftp-passive-host&port-host *passive-ip4-host&port*)])
-            (let-values ([(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." host))]
-                         [(p1 p2) (quotient/remainder current-passive-ip4-port 256)])
-              (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2))
-            (set-ftp-passive-host&port-port! *passive-ip4-host&port* current-passive-ip4-port)
+          (let-values ([(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." passive-ip4-host))]
+                       [(p1 p2) (quotient/remainder free-passive-ip4-port 256)])
             (set! *DTP* 'passive)
-            (set! *passive-host-port* *passive-ip4-host&port*)
-            (set! get-passive-listener get-passive-ip4-listener)
-            (current-passive-ip4-port (if (>= current-passive-ip4-port passive-ip4-ports-to)
-                                          passive-ip4-ports-from
-                                          (add1 current-passive-ip4-port))))))
+            (set! *passive-host&port* (ftp-host&port passive-ip4-host free-passive-ip4-port))
+            (free-passive-ip4-port (if (>= free-passive-ip4-port passive-ip4-ports-to)
+                                       passive-ip4-ports-from
+                                       (add1 free-passive-ip4-port)))
+            (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2))))
     
     ;; Experimental
     (define (EPRT-COMMAND params)
@@ -1181,7 +1174,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            (port . <= . #xffff))
                 (raise 'syntax))
               (set! *DTP* 'active)
-              (set! *active-host-port* (ftp-active-host&port ip port))
+              (set! *active-host&port* (ftp-host&port ip port))
               (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "EPRT")))
           (print-crlf/encoding** 'SYNTAX-ERROR "EPRT:")))
     
@@ -1191,25 +1184,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (if passive-ip4-host
                     (begin
                       (set! *DTP* 'passive)
-                      (set-ftp-passive-host&port-port! *passive-ip4-host&port* current-passive-ip4-port)
-                      (set! *passive-host-port* *passive-ip4-host&port*)
-                      (set! get-passive-listener get-passive-ip4-listener)
-                      (print-crlf/encoding** 'EPSV current-passive-ip4-port)
-                      (current-passive-ip4-port (if (>= current-passive-ip4-port passive-ip4-ports-to)
-                                                    passive-ip4-ports-from
-                                                    (add1 current-passive-ip4-port))))
+                      (set! *passive-host&port* (ftp-host&port passive-ip4-host free-passive-ip4-port))
+                      (free-passive-ip4-port (if (>= free-passive-ip4-port passive-ip4-ports-to)
+                                                 passive-ip4-ports-from
+                                                 (add1 free-passive-ip4-port)))
+                      (print-crlf/encoding** 'EPSV free-passive-ip4-port))
                     (print-crlf/encoding** 'BAD-PROTOCOL)))
               (define (epsv-2)
                 (if passive-ip6-host
                     (begin
                       (set! *DTP* 'passive)
-                      (set-ftp-passive-host&port-port! *passive-ip6-host&port* current-passive-ip6-port)
-                      (set! *passive-host-port* *passive-ip6-host&port*)
-                      (set! get-passive-listener get-passive-ip6-listener)
-                      (print-crlf/encoding** 'EPSV current-passive-ip6-port)
-                      (current-passive-ip6-port (if (>= current-passive-ip6-port passive-ip6-ports-to)
-                                                    passive-ip6-ports-from
-                                                    (add1 current-passive-ip6-port))))
+                      (set! *passive-host&port* (ftp-host&port passive-ip6-host free-passive-ip6-port))
+                      (free-passive-ip6-port (if (>= free-passive-ip6-port passive-ip6-ports-to)
+                                                 passive-ip6-ports-from
+                                                 (add1 free-passive-ip6-port)))
+                      (print-crlf/encoding** 'EPSV free-passive-ip6-port))
                     (print-crlf/encoding** 'BAD-PROTOCOL)))
               (define (epsv)
                 (if (eq? *current-protocol* '|1|) (epsv-1) (epsv-2)))]
@@ -1240,16 +1229,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     ;; Experimental
     (define (active-data-transfer data file?)
-      (let ([host (ftp-active-host&port-host *active-host-port*)]
-            [port (ftp-active-host&port-port *active-host-port*)]
-            [cust (make-custodian)])
-        (set! *current-process* cust)
-        (parameterize ([current-custodian cust])
+      (let ([host (ftp-host&port-host *active-host&port*)]
+            [port (ftp-host&port-port *active-host&port*)])
+        (set! *current-process* (make-custodian))
+        (parameterize ([current-custodian *current-process*])
           (thread (λ ()
-                    (parameterize ([current-custodian cust])
+                    (parameterize ([current-custodian *current-process*])
                       (with-handlers ([any/c (λ (e)
+                                               (displayln e)
                                                (print-crlf/encoding** 'TRANSFER-ABORTED))])
-                        (let-values ([(in out) (tcp-connect host port)])
+                        (let-values ([(in out) (net-connect host port)])
                           (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
                           (if file?
                               (call-with-input-file data
@@ -1264,48 +1253,54 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 ((Image)
                                  (write-bytes data out))))
                           (flush-output out)
+                          ;(close-output-port out);ssl required
                           (print-crlf/encoding** 'TRANSFER-OK)))
                       ;(displayln  "Process complete!" log-output-port)
-                      (custodian-shutdown-all cust))))
+                      (custodian-shutdown-all *current-process*))))
           (thread (λ ()
                     (sleep 600)
                     ;(displayln "Auto kill working process!" log-output-port)
-                    (custodian-shutdown-all cust))))))
+                    (custodian-shutdown-all *current-process*))))))
     
     ;; Experimental
     (define (passive-data-transfer data file?)
-      (let ([host (ftp-passive-host&port-host *passive-host-port*)]
-            [port (ftp-passive-host&port-port *passive-host-port*)]
-            [cust (make-custodian)])
-        (set! *current-process* cust)
-        (parameterize ([current-custodian cust])
-          (thread (λ ()
-                    (parameterize ([current-custodian cust])
-                      (with-handlers ([any/c (λ (e)
-                                               (print-crlf/encoding** 'TRANSFER-ABORTED))])
-                        (let ([listener (get-passive-listener port)])
-                          (let-values ([(in out) (tcp-accept listener)])
-                            (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
-                            (if file?
-                                (call-with-input-file data
-                                  (λ (in)
-                                    (let loop ([dat (read-bytes 10048576 in)])
-                                      (unless (eof-object? dat)
-                                        (write-bytes dat out)
-                                        (loop (read-bytes 10048576 in))))))
-                                (case *representation-type*
-                                  ((ASCII)
-                                   (print/locale-encoding out data))
-                                  ((Image)
-                                   (write-bytes data out))))
-                            (flush-output out)
-                            (print-crlf/encoding** 'TRANSFER-OK))))
-                      ;(displayln "Process complete!" log-output-port)
-                      (custodian-shutdown-all cust))))
-          (thread (λ ()
-                    (sleep 600)
-                    ;(displayln "Auto kill working process!" log-output-port)
-                    (custodian-shutdown-all cust))))))
+      (set! *current-process* (make-custodian))  
+      (parameterize ([current-custodian *current-process*])
+        (thread (λ ()
+                  (parameterize ([current-custodian *current-process*])
+                    (with-handlers ([any/c (λ (e)
+                                             (print-crlf/encoding** 'TRANSFER-ABORTED))])
+                      (let* ([host (ftp-host&port-host *passive-host&port*)]
+                             [port (ftp-host&port-port *passive-host&port*)]
+                             [listener (if encryption
+                                           (ssl-listen port (random 123456789) #t host encryption)
+                                           (tcp-listen port 1 #t host))])
+                        (when encryption
+                          (ssl-load-certificate-chain! listener server-ip4-certificate)
+                          (ssl-load-private-key! listener server-ip4-certificate))
+                        (let-values ([(in out) (net-accept listener)])
+                          (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
+                          (if file?
+                              (call-with-input-file data
+                                (λ (in)
+                                  (let loop ([dat (read-bytes 10048576 in)])
+                                    (unless (eof-object? dat)
+                                      (write-bytes dat out)
+                                      (loop (read-bytes 10048576 in))))))
+                              (case *representation-type*
+                                ((ASCII)
+                                 (print/locale-encoding out data))
+                                ((Image)
+                                 (write-bytes data out))))
+                          ;(flush-output out)
+                          (close-output-port out);ssl required
+                          (print-crlf/encoding** 'TRANSFER-OK))))
+                    ;(displayln "Process complete!" log-output-port)
+                    (custodian-shutdown-all *current-process*))))
+        (thread (λ ()
+                  (sleep 600)
+                  ;(displayln "Auto kill working process!" log-output-port)
+                  (custodian-shutdown-all *current-process*)))))
     
     (define (ftp-store-file new-file-full-path exists-mode)
       (case *DTP*
@@ -1316,11 +1311,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     ;; Experimental
     (define (active-store-file new-file-full-path exists-mode)
-      (let ([host (ftp-active-host&port-host *active-host-port*)]
-            [port (ftp-active-host&port-port *active-host-port*)]
-            [cust (make-custodian)])
-        (set! *current-process* cust)
-        (parameterize ([current-custodian cust])
+      (let ([host (ftp-host&port-host *active-host&port*)]
+            [port (ftp-host&port-port *active-host&port*)])
+        (set! *current-process* (make-custodian))
+        (parameterize ([current-custodian *current-process*])
           (thread (λ ()
                     (with-handlers ([any/c (λ (e)
                                              (print-crlf/encoding** 'TRANSFER-ABORTED))])
@@ -1329,8 +1323,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
                             (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
                                             (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
-                          (parameterize ([current-custodian cust])
-                            (let-values ([(in out) (tcp-connect host port)])
+                          (parameterize ([current-custodian *current-process*])
+                            (let-values ([(in out) (net-connect host port)])
                               (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
                               (when *restart-marker*
                                 (file-position fout *restart-marker*)
@@ -1347,51 +1341,57 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" log-output-port)
-                    (custodian-shutdown-all cust)))
+                    (custodian-shutdown-all *current-process*)))
           (thread (λ ()
                     (sleep 600)
                     ;(displayln "Auto kill working process!" log-output-port)
-                    (custodian-shutdown-all cust))))))
+                    (custodian-shutdown-all *current-process*))))))
     
     ;; Experimental
     (define (passive-store-file new-file-full-path exists-mode)
-      (let ([host (ftp-passive-host&port-host *passive-host-port*)]
-            [port (ftp-passive-host&port-port *passive-host-port*)]
-            [cust (make-custodian)])
-        (set! *current-process* cust)
-        (parameterize ([current-custodian cust])
-          (thread (λ ()
-                    (with-handlers ([any/c (λ (e)
-                                             (print-crlf/encoding** 'TRANSFER-ABORTED))])
-                      (call-with-output-file new-file-full-path
-                        (λ (fout)
-                          (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
-                            (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
-                                            (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
-                          (parameterize ([current-custodian cust])
-                            (let ([listener (get-passive-listener port)])
-                              (let-values ([(in out) (tcp-accept listener)])
-                                (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
-                                (when *restart-marker*
-                                  (file-position fout *restart-marker*)
-                                  (set! *restart-marker* #f))
-                                (let loop ([dat (read-bytes 10048576 in)])
-                                  (unless (eof-object? dat)
-                                    (write-bytes dat fout)
-                                    (loop (read-bytes 10048576 in))))
-                                (flush-output fout)
-                                (print-log-event (format "~a data to file ~a"
-                                                         (if (eq? exists-mode 'append) "Append" "Store")
-                                                         (real-path->ftp-path new-file-full-path)))
-                                (print-crlf/encoding** 'TRANSFER-OK)))))
-                        #:mode 'binary
-                        #:exists exists-mode))
-                    ;(displayln "Process complete!" log-output-port)
-                    (custodian-shutdown-all cust)))
-          (thread (λ ()
-                    (sleep 600)
-                    ;(displayln "Auto kill working process!" log-output-port)
-                    (custodian-shutdown-all cust))))))
+      (set! *current-process* (make-custodian))
+      (parameterize ([current-custodian *current-process*])
+        (thread (λ ()
+                  (with-handlers ([any/c (λ (e)
+                                           (print-crlf/encoding** 'TRANSFER-ABORTED))])
+                    (call-with-output-file new-file-full-path
+                      (λ (fout)
+                        (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
+                          (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
+                                          (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
+                        (parameterize ([current-custodian *current-process*])
+                          (let* ([host (ftp-host&port-host *passive-host&port*)]
+                                 [port (ftp-host&port-port *passive-host&port*)]
+                                 [listener (if encryption
+                                               (ssl-listen port (random 123456789) #t host encryption)
+                                               (tcp-listen port 1 #t host))])
+                            (when encryption
+                              (ssl-load-certificate-chain! listener server-ip4-certificate)
+                              (ssl-load-private-key! listener server-ip4-certificate))
+                            (let-values ([(in out) (net-accept listener)])
+                              (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
+                              (when *restart-marker*
+                                (file-position fout *restart-marker*)
+                                (set! *restart-marker* #f))
+                              (let loop ([dat (read-bytes 10048576 in)])
+                                (unless (eof-object? dat)
+                                  (write-bytes dat fout)
+                                  (loop (read-bytes 10048576 in))))
+                              (flush-output fout)
+                              (print-log-event (format "~a data to file ~a"
+                                                       (if (eq? exists-mode 'append) "Append" "Store")
+                                                       (real-path->ftp-path new-file-full-path)))
+                              (print-crlf/encoding** 'TRANSFER-OK)))))
+                      #:mode 'binary
+                      #:exists exists-mode))
+                  ;(displayln "Process complete!" log-output-port)
+                  (custodian-shutdown-all *current-process*)))
+        (thread (λ ()
+                  (sleep 600)
+                  ;(displayln "Auto kill working process!" log-output-port)
+                  (custodian-shutdown-all *current-process*)))))
+    
+    ;(define (current-passive-host&port
     
     (define-syntax (passive-ip4-host stx)
       #'(ftp-server-params-server-ip4-host server-params))
@@ -1405,17 +1405,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax (passive-ip4-ports-to stx)
       #'(ftp-server-params-passive-ip4-ports-to server-params))
     
-    (define-syntax (passive-ip4-listeners stx)
-      #'(ftp-server-params-passive-ip4-listeners server-params))
-    
     (define-syntax (passive-ip6-ports-from stx)
       #'(ftp-server-params-passive-ip6-ports-from server-params))
     
     (define-syntax (passive-ip6-ports-to stx)
       #'(ftp-server-params-passive-ip6-ports-to server-params))
     
-    (define-syntax (passive-ip6-listeners stx)
-      #'(ftp-server-params-passive-ip6-listeners server-params))
+    (define-syntax (server-ip4-certificate stx)
+      #'(ftp-server-params-server-ip4-certificate server-params))
+    
+    (define-syntax (server-ip6-certificate stx)
+      #'(ftp-server-params-server-ip6-certificate server-params))
     
     (define-syntax (default-root-dir stx)
       #'(ftp-server-params-default-root-dir server-params))
@@ -1435,21 +1435,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax (kill-current-ftp-process stx)
       #'(custodian-shutdown-all *current-process*))
     
-    (define-syntax (current-passive-ip4-port stx)
+    (define-syntax (free-passive-ip4-port stx)
       (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-current-passive-ip4-port! server-params expr)]
-        [_ #'(ftp-server-params-current-passive-ip4-port server-params)]))
+        [(_ expr) #'(set-ftp-server-params-free-passive-ip4-port! server-params expr)]
+        [_ #'(ftp-server-params-free-passive-ip4-port server-params)]))
     
-    (define-syntax (current-passive-ip6-port stx)
+    (define-syntax (free-passive-ip6-port stx)
       (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-current-passive-ip6-port! server-params expr)]
-        [_ #'(ftp-server-params-current-passive-ip6-port server-params)]))
-    
-    (define (get-passive-ip4-listener port)
-      (vector-ref passive-ip4-listeners (- port passive-ip4-ports-from)))
-    
-    (define (get-passive-ip6-listener port)
-      (vector-ref passive-ip6-listeners (- port passive-ip6-ports-from)))
+        [(_ expr) #'(set-ftp-server-params-free-passive-ip6-port! server-params expr)]
+        [_ #'(ftp-server-params-free-passive-ip6-port server-params)]))
     
     (define (read-request input-port)
       (if (byte-ready? input-port)
@@ -1572,6 +1566,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("PASS" ,PASS-COMMAND . "PASS <SP> <password>")
               ("PASV" ,PASV-COMMAND . "PASV")
               ("PORT" ,PORT-COMMAND . "PORT <SP> <host-port>")
+              ;
+              ("PROT" ,PROT-COMMAND . "PROT <SP> <code>")
+              ("PBSZ" ,PBSZ-COMMAND . "PBSZ <SP> <num>")
+              ;
               ("PWD" ,PWD-COMMAND . "PWD")
               ("QUIT" ,QUIT-COMMAND . "QUIT")
               ("REIN" ,REIN-COMMAND . "REIN")
@@ -1731,10 +1729,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Public Definitions ----------
     ;;
     (init-field [welcome-message         "Racket FTP Server!"]
+                
                 [server-ip4-host         "127.0.0.1"]
                 [server-ip4-port         21]
+                [server-ip4-encryption   #f]
+                [server-ip4-certificate  "certs/ip4.pem"]
+                
                 [server-ip6-host         "::1"]
                 [server-ip6-port         21]
+                [server-ip6-encryption   #f]
+                [server-ip6-certificate  "certs/ip6.pem"]
+                
                 [max-allow-wait          50]
                 [transfer-wait-time      120]
                 
@@ -1781,39 +1786,52 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (server-custodian (make-custodian))
         (set! server-params (ftp-server-params passive-ip4-ports-from
                                                passive-ip4-ports-to
-                                               passive-ip4-ports-from  ;current-passive-ip4-port
+                                               passive-ip4-ports-from  ;free-passive-ip4-port
                                                passive-ip6-ports-from
                                                passive-ip6-ports-to 
-                                               passive-ip6-ports-from  ;current-passive-ip6-port
-                                               #f                      ;passive-ip4-listeners
-                                               #f                      ;passive-ip6-listeners
+                                               passive-ip6-ports-from  ;free-passive-ip6-port
                                                server-ip4-host
                                                server-ip6-host
+                                               server-ip4-encryption
+                                               server-ip6-encryption
+                                               server-ip4-certificate
+                                               server-ip6-certificate
                                                default-root-dir
                                                default-locale-encoding
                                                log-output-port
                                                server-ftp-users))      ;ftp-users
         (init-ftp-dirs default-root-dir)
-        (init-passive-listeners (server-custodian))
         (parameterize ([current-custodian (server-custodian)])
           (when server-ip4-host
-            (letrec ([listener (tcp-listen server-ip4-port max-allow-wait #t server-ip4-host)]
-                     [main-loop (λ ()
-                                  (send (new ftp-session% 
-                                             [server-params server-params]
-                                             [welcome-message welcome-message])
-                                        handle-client-request listener transfer-wait-time)
-                                  (main-loop))])
-              (thread main-loop)))
+            (let ([listener (if server-ip4-encryption
+                                (ssl-listen server-ip4-port (random 123456789) #t server-ip4-host server-ip4-encryption)
+                                (tcp-listen server-ip4-port max-allow-wait #t server-ip4-host))])
+              (when server-ip4-encryption
+                (ssl-load-certificate-chain! listener server-ip4-certificate)
+                (ssl-load-private-key! listener server-ip4-certificate))
+              (letrec ([main-loop (λ ()
+                                    (send (new ftp-session% 
+                                               [server-params server-params]
+                                               [encryption server-ip4-encryption]
+                                               [welcome-message welcome-message])
+                                          handle-client-request listener transfer-wait-time)
+                                    (main-loop))])
+                (thread main-loop))))
           (when server-ip6-host
-            (letrec ([listener (tcp-listen server-ip6-port max-allow-wait #t server-ip6-host)]
-                     [main-loop (λ ()
-                                  (send (new ftp-session% 
-                                             [server-params server-params]
-                                             [welcome-message welcome-message])
-                                        handle-client-request listener transfer-wait-time)
-                                  (main-loop))])
-              (thread main-loop))))))
+            (let ([listener (if server-ip6-encryption
+                                (ssl-listen server-ip6-port (random 123456789) #t server-ip6-host server-ip6-encryption)
+                                (tcp-listen server-ip6-port max-allow-wait #t server-ip6-host))])
+              (when server-ip6-encryption
+                (ssl-load-certificate-chain! listener server-ip6-certificate)
+                (ssl-load-private-key! listener server-ip6-certificate))
+              (letrec ([main-loop (λ ()
+                                    (send (new ftp-session% 
+                                               [server-params server-params]
+                                               [encryption server-ip6-encryption]
+                                               [welcome-message welcome-message])
+                                          handle-client-request listener transfer-wait-time)
+                                    (main-loop))])
+                (thread main-loop)))))))
     
     (define/public (stop)
       (when (server-custodian)
@@ -1825,17 +1843,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define/private (init-ftp-dirs root-dir)
       (unless (ftp-dir-exists? root-dir)
         (ftp-mkdir* root-dir)))
-    
-    (define/private (init-passive-listeners server-custodian)
-      (parameterize ([current-custodian server-custodian])
-        (when passive-ip4-host
-          (passive-ip4-listeners (build-vector (- (add1 passive-ip4-ports-to) passive-ip4-ports-from)
-                                               (λ (n) (tcp-listen (passive-ip4-ports-from . + . n) 
-                                                                  1 #t passive-ip4-host)))))
-        (when passive-ip6-host
-          (passive-ip6-listeners (build-vector (- (add1 passive-ip6-ports-to) passive-ip6-ports-from)
-                                               (λ (n) (tcp-listen (passive-ip6-ports-from . + . n) 
-                                                                  1 #t passive-ip6-host)))))))
     
     (define-syntax (passive-ip4-host stx) #'server-ip4-host)
     
