@@ -1236,7 +1236,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (thread (λ ()
                     (parameterize ([current-custodian *current-process*])
                       (with-handlers ([any/c (λ (e)
-                                               (displayln e)
+                                               ;(displayln e)
                                                (print-crlf/encoding** 'TRANSFER-ABORTED))])
                         (let-values ([(in out) (net-connect host port)])
                           (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
@@ -1755,7 +1755,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Private Definitions ----------
     ;;
     (define server-params #f)
-    (define server-custodian (make-parameter #f))
+    (define state 'stopped)
+    (define server-custodian #f)
     (define server-ftp-users (make-hash))
     ;;
     ;; ---------- Public Methods ----------
@@ -1782,8 +1783,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (set! server-ftp-users (make-hash)))
     
     (define/public (run)
-      (unless (server-custodian)
-        (server-custodian (make-custodian))
+      (when (eq? state 'stopped)
+        (set! server-custodian (make-custodian))
         (set! server-params (ftp-server-params passive-ip4-ports-from
                                                passive-ip4-ports-to
                                                passive-ip4-ports-from  ;free-passive-ip4-port
@@ -1801,7 +1802,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                log-output-port
                                                server-ftp-users))      ;ftp-users
         (init-ftp-dirs default-root-dir)
-        (parameterize ([current-custodian (server-custodian)])
+        (parameterize ([current-custodian server-custodian])
           (when server-ip4-host
             (let ([listener (if server-ip4-encryption
                                 (ssl-listen server-ip4-port (random 123456789) #t server-ip4-host server-ip4-encryption)
@@ -1831,12 +1832,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                [welcome-message welcome-message])
                                           handle-client-request listener transfer-wait-time)
                                     (main-loop))])
-                (thread main-loop)))))))
+                (thread main-loop)))))
+        (set! state 'running)))
     
     (define/public (stop)
-      (when (server-custodian)
-        (custodian-shutdown-all (server-custodian))
-        (server-custodian #f)))
+      (when (eq? state 'running)
+        (custodian-shutdown-all server-custodian)
+        (set! state 'stopped)))
     ;;
     ;; ---------- Private Methods ----------
     ;;

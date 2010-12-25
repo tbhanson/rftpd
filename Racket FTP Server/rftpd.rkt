@@ -63,7 +63,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [config-file "conf/ftp.config"]
                 [users-file "conf/ftp.users"])
     
-    (define control-custodian #f)
     (define log-out #f)
     
     (define server #f)
@@ -112,8 +111,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (letrec ([main-loop (λ ()
                                   (handle-client-request listener)
                                   (main-loop))])
-              (thread main-loop))))
-        (set! control-custodian cust)))
+              (thread main-loop))))))
     
     (define/private (handle-client-request listener)
       (let ([cust (make-custodian)])
@@ -122,6 +120,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (thread (λ ()
                       (with-handlers ([any/c #|displayln|# void])
                         (eval-cmd in out))
+                      (close-output-port out)
                       (custodian-shutdown-all cust)))))))
     
     (define/private (eval-cmd input-port output-port)
