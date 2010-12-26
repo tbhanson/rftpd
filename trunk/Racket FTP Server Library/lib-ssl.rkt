@@ -14,39 +14,42 @@
 ;;  read/write (the opposite direction) didn't finish, and so that
 ;;  opposite must be completed, first.
 
-#lang racket
+#lang racket/base
 
 (require ffi/unsafe
-         racket/runtime-path)
+         racket/runtime-path
+         racket/port
+         racket/tcp
+         (for-syntax racket/base))
 
 (provide ssl-available?
          ssl-load-fail-reason
-         
+
          ssl-make-client-context
          ssl-make-server-context
          ssl-client-context?
          ssl-server-context?
          ssl-context?
-         
+
          ssl-load-certificate-chain!
          ssl-load-private-key!
          ssl-load-verify-root-certificates!
          ssl-load-suggested-certificate-authorities!
          ssl-set-verify!
-         
+
          ports->ssl-ports
-         
+
          ssl-listen
          ssl-close
          ssl-accept
          ssl-accept/enable-break
          ssl-connect
          ssl-connect/enable-break
-         
+
          ssl-listener?
          ssl-addresses
          ssl-abandon-port
-         
+
          ssl-port?)
 
 ;; We need to declare because they might be distributed with PLT Scheme
@@ -255,7 +258,7 @@
 
 (define (escape-atomic thunk)
   (if (in-atomic?)
-      (raise (make-exn:atomic 
+      (raise (make-exn:atomic
               "error during atomic..."
               (current-continuation-marks)
               thunk))
@@ -271,11 +274,11 @@
 (define-struct ssl-listener (l mzctx))
 
 ;; internal:
-(define-struct mzssl (ssl i o r-bio w-bio pipe-r pipe-w 
-                          buffer lock 
+(define-struct mzssl (ssl i o r-bio w-bio pipe-r pipe-w
+                          buffer lock
                           w-closed? r-closed?
                           flushing? must-write must-read
-                          refcount 
+                          refcount
                           close-original? shutdown-on-close?
                           finalizer-cancel
                           error)
@@ -313,7 +316,7 @@
                 TLSv1_server_method)]
      [else (escape-atomic
             (lambda ()
-              (raise-type-error 
+              (raise-type-error
                who
                (string-append also-expect "'sslv2-or-v3, 'sslv2, 'sslv3, or 'tls")
                e)))])))
@@ -369,17 +372,17 @@
                  (get-error-message (ERR_get_error))))))))
 
 (define (ssl-load-certificate-chain! ssl-context-or-listener pathname)
-  (ssl-load-... 'ssl-load-certificate-chain! 
+  (ssl-load-... 'ssl-load-certificate-chain!
                 SSL_CTX_use_certificate_chain_file
                 ssl-context-or-listener pathname))
 
 (define (ssl-load-verify-root-certificates! ssl-context-or-listener pathname)
-  (ssl-load-... 'ssl-load-verify-root-certificates! 
+  (ssl-load-... 'ssl-load-verify-root-certificates!
                 (lambda (a b) (SSL_CTX_load_verify_locations a b #f))
                 ssl-context-or-listener pathname))
 
 (define (ssl-load-suggested-certificate-authorities! ssl-listener pathname)
-  (ssl-load-... 'ssl-load-suggested-certificate-authorities! 
+  (ssl-load-... 'ssl-load-suggested-certificate-authorities!
                 (lambda (ctx path)
                   (let ([stk (SSL_load_client_CA_file path)])
                     (if (ptr-equal? stk #f)
@@ -404,7 +407,7 @@
                                    ssl-context-or-listener)])
     (SSL_CTX_set_verify ctx
                         (if on?
-                            (bitwise-ior SSL_VERIFY_PEER 
+                            (bitwise-ior SSL_VERIFY_PEER
                                          SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
                             SSL_VERIFY_NONE)
                         #f)))
@@ -427,20 +430,20 @@
   (let ([buffer (mzssl-buffer mzssl)]
         [i (mzssl-i mzssl)]
         [r-bio (mzssl-r-bio mzssl)])
-    (let ([n ((if (and need-progress?/out 
+    (let ([n ((if (and need-progress?/out
                        (not (output-port? need-progress?/out)))
-                  read-bytes-avail! 
+                  read-bytes-avail!
                   read-bytes-avail!*)
               buffer i)])
       (cond
-        [(eof-object? n) 
+        [(eof-object? n)
          (BIO_set_mem_eof_return r-bio 0)
          eof]
         [(zero? n)
          (when need-progress?/out
            (sync need-progress?/out i))
          0]
-        [else 
+        [else
          (let ([m (BIO_write r-bio buffer n)])
            (unless (= m n)
              ((mzssl-error mzssl) 'pump-input-once "couldn't write all bytes to BIO!"))
@@ -525,9 +528,9 @@
                                       (when enforce-retry?
                                         (set-mzssl-must-read! mzssl (make-semaphore)))
                                       (wrap-evt (choice-evt
-                                                 (mzssl-i mzssl) 
+                                                 (mzssl-i mzssl)
                                                  (if out-blocked?
-                                                     (mzssl-o mzssl) 
+                                                     (mzssl-o mzssl)
                                                      never-evt))
                                                 (lambda (x) 0)))
                                     (do-read buffer)))]
@@ -542,7 +545,7 @@
                                     (wrap-evt (mzssl-o mzssl) (lambda (x) 0))))]
                              [else
                               (set! must-read-len #f)
-                              ((mzssl-error mzssl) 'read-bytes 
+                              ((mzssl-error mzssl) 'read-bytes
                                                    "SSL read failed ~a"
                                                    (get-error-message (ERR_get_error)))]))))))]
               [top-read
@@ -592,7 +595,7 @@
   ;; Make sure that this SSL connection has said everything that it
   ;; wants to say --- that is, move data from the SLL output to the
   ;; underlying output port. Depending on the transport, the other end
-  ;; may be stuck trying to tell us something before it will listen, 
+  ;; may be stuck trying to tell us something before it will listen,
   ;; so we also have to read in any available information.
   (let loop ()
     (let ([v (pump-input-once mzssl #f)])
@@ -701,7 +704,7 @@
                                         (wrap-evt (mzssl-o mzssl) (lambda (x) #f))))]
                                  [else
                                   (set! must-write-len #f)
-                                  ((mzssl-error mzssl) 'write-bytes 
+                                  ((mzssl-error mzssl) 'write-bytes
                                                        "SSL write failed ~a"
                                                        (get-error-message (ERR_get_error)))])))))))]
               [top-write
@@ -733,7 +736,7 @@
                             (unless (and (len . >= . must-write-len)
                                          (bytes=? (subbytes xfer-buffer 0 must-write-len)
                                                   (subbytes buffer s (+ s must-write-len))))
-                              ((mzssl-error mzssl) 'write-bytes 
+                              ((mzssl-error mzssl) 'write-bytes
                                                    "SSL output request: ~e different from previous unsatisfied request: ~e"
                                                    (subbytes buffer s e)
                                                    (subbytes xfer-buffer 0 must-write-len)))
@@ -787,7 +790,7 @@
                                        ;; out that we have and try again, up to 10 times.
                                        (unless (cnt . >= . 10)
                                          (loop (add1 cnt)))
-                                       ((mzssl-error mzssl) 'read-bytes 
+                                       ((mzssl-error mzssl) 'read-bytes
                                                             "SSL shutdown failed ~a"
                                                             (get-error-message (ERR_get_error))))])))))))
                     (set-mzssl-w-closed?! mzssl #t)
@@ -814,7 +817,7 @@
        [() buffer-mode]
        [(mode) (set! buffer-mode mode)]))))
 
-(define (ports->ssl-ports i o 
+(define (ports->ssl-ports i o
                           #:context [context #f]
                           #:encrypt [encrypt default-encrypt]
                           #:mode [mode 'connect]
@@ -837,7 +840,7 @@
                         [else
                          (escape-atomic
                           (lambda ()
-                            (raise-type-error who "'connect or 'accept" 
+                            (raise-type-error who "'connect or 'accept"
                                               connect/accept)))])]
             [r-bio (BIO_new (BIO_s_mem))]
             [w-bio (BIO_new (BIO_s_mem))]
@@ -869,9 +872,9 @@
             (SSL_set_bio ssl r-bio w-bio)
             ;; ssl has r-bio & w-bio (no ref count?), so drop it:
             (set! free-bio? #f)
-            
+
             ;; Register a finalizer for ssl:
-            (register-finalizer ssl 
+            (register-finalizer ssl
                                 (lambda (v)
                                   (when (unbox cancel)
                                     (SSL_free ssl))))
@@ -890,10 +893,10 @@
     (let-values ([(buffer) (make-bytes BUFFER-SIZE)]
                  [(pipe-r pipe-w) (make-pipe)]
                  [(cancel) (box #t)])
-      (let ([mzssl (make-mzssl ssl i o r-bio w-bio pipe-r pipe-w 
-                               buffer (make-semaphore 1) 
+      (let ([mzssl (make-mzssl ssl i o r-bio w-bio pipe-r pipe-w
+                               buffer (make-semaphore 1)
                                #f #f
-                               #f #f #f 2 
+                               #f #f #f 2
                                close? shutdown-on-close?
                                cancel
                                error/ssl)])
@@ -1006,7 +1009,7 @@
                             (close-input-port i)
                             (close-output-port o)
                             (raise exn))])
-      (wrap-ports who i o client-context-or-protocol-symbol 'connect #t #f error/network))))
+      (wrap-ports who i o client-context-or-protocol-symbol 'connect #t #t #|#f|# error/network))))
 
 (define (ssl-connect
          hostname port-k
