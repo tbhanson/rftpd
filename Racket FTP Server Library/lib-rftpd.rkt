@@ -1758,6 +1758,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define state 'stopped)
     (define server-custodian #f)
     (define server-ftp-users (make-hash))
+    (define server-ip4-thread #f)
+    (define server-ip6-thread #f)
     ;;
     ;; ---------- Public Methods ----------
     ;;
@@ -1817,7 +1819,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                [welcome-message welcome-message])
                                           handle-client-request listener transfer-wait-time)
                                     (main-loop))])
-                (thread main-loop))))
+                (set! server-ip4-thread (thread main-loop)))))
           (when server-ip6-host
             (let ([listener (if server-ip6-encryption
                                 (ssl-listen server-ip6-port (random 123456789) #t server-ip6-host server-ip6-encryption)
@@ -1832,13 +1834,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                [welcome-message welcome-message])
                                           handle-client-request listener transfer-wait-time)
                                     (main-loop))])
-                (thread main-loop)))))
+                (set! server-ip4-thread (thread main-loop))))))
         (set! state 'running)))
     
     (define/public (stop)
       (when (eq? state 'running)
         (custodian-shutdown-all server-custodian)
         (set! state 'stopped)))
+    
+    (define/public (status) state)
     ;;
     ;; ---------- Private Methods ----------
     ;;

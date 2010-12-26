@@ -28,6 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (require racket/cmdline
          racket/list
+         racket/port
          (file "lib-ssl.rkt")
          (for-syntax racket/base))
 
@@ -77,40 +78,39 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (let-values ([(in out) (ssl-connect (control-host) (control-port) 'sslv3)])
         (displayln (control-passwd) out)(flush-output out)
         (when (string=? (read-line in) "Ok")
-          (cond
-            ((run?)
-             (displayln "%run" out)
-             (flush-output out)
-             (displayln (read-line in)))
-            ((stop?)
-             (displayln "%stop" out)
-             (flush-output out)
-             (displayln (read-line in)))
-            ((restart?)
-             (displayln "%restart" out)
-             (flush-output out)
-             (displayln (read-line in)))
-            ((shutdown?)
-             (displayln "%exit" out)
-             (flush-output out)
-             (displayln (read-line in)))
-            (else
-             (when (interactive-mode)
-               (displayln help-msg) (newline)
-               (let loop ()
-                 (display "#> ")
-                 (let ([cmd (read)])
-                   (case cmd
-                     ((help ?)
-                      (displayln "%run     - run server.")
-                      (displayln "%stop    - stop server.")
-                      (displayln "%restart - restart server.")
-                      (displayln "%exit    - shutdown server.")
-                      (loop))
-                     (else
-                      (displayln cmd out)
-                      (flush-output out)
-                      (displayln (read-line in))
-                      (unless (eq? cmd '%exit)
-                        (loop))))))))))))
+          (let ([request (λ (cmd)
+                           (displayln cmd out)
+                           (flush-output out)
+                           (displayln (read-line in)))])
+            (cond
+              ((run?)
+               (request "%run")
+               (request "%bye"))
+              ((stop?)
+               (request "%stop")
+               (request "%bye"))
+              ((restart?)
+               (request "%restart")
+               (request "%bye"))
+              ((shutdown?)
+               (request "%exit")
+               (request "%bye"))
+              (else
+               (when (interactive-mode)
+                 (displayln help-msg) (newline)
+                 (let loop ()
+                   (display "#> ")
+                   (let ([cmd (read)])
+                     (case cmd
+                       ((help ?)
+                        (display-lines '("%run     - run server."
+                                         "%stop    - stop server."
+                                         "%restart - restart server."
+                                         "%exit    - shutdown server."
+                                         "%bye     - close session."))
+                        (loop))
+                       (else
+                        (request cmd)
+                        (unless (memq cmd '(%exit %bye))
+                          (loop)))))))))))))
     (custodian-shutdown-all cust)))
