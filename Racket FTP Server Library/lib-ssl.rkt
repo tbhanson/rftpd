@@ -17,69 +17,67 @@
 #lang racket/base
 
 (require ffi/unsafe
-         racket/runtime-path
          racket/port
          racket/tcp
          (for-syntax racket/base))
 
 (provide ssl-available?
          ssl-load-fail-reason
-
+         
          ssl-make-client-context
          ssl-make-server-context
          ssl-client-context?
          ssl-server-context?
          ssl-context?
-
+         
          ssl-load-certificate-chain!
          ssl-load-private-key!
          ssl-load-verify-root-certificates!
          ssl-load-suggested-certificate-authorities!
          ssl-set-verify!
-
+         
          ports->ssl-ports
-
+         
          ssl-listen
          ssl-close
          ssl-accept
          ssl-accept/enable-break
          ssl-connect
          ssl-connect/enable-break
-
+         
          ssl-listener?
          ssl-addresses
          ssl-abandon-port
-
+         
          ssl-port?)
 
-;; We need to declare because they might be distributed with PLT Scheme
-;; in which case they should get bundled with stand-alone executables:
-(define-runtime-path libcrypto-so
+
+(define libcrypto-so
   (case (system-type)
-    [(windows) '(so "libeay32")]
-    [else '(so "libcrypto")]))
-(define-runtime-path libssl-so
+    [(windows) "libeay32"]
+    [else "libcrypto"]))
+
+(define libssl-so
   (case (system-type)
-    [(windows) '(so "ssleay32")]
-    [else '(so "libssl")]))
+    [(windows) "ssleay32"]
+    [else "libssl"]))
 
 (define ssl-load-fail-reason #f)
 
 (define 3m? (eq? '3m (system-type 'gc)))
 
 (define libcrypto
-  (with-handlers ([exn:fail? (lambda (x)
+  (with-handlers ([exn:fail? (λ (x)
                                (set! ssl-load-fail-reason (exn-message x))
                                #f)])
-    (ffi-lib libcrypto-so '("" "0.9.8b" "0.9.8" "0.9.7"))))
+    (ffi-lib libcrypto-so '("" "1.0.0c" "0.9.8i" "0.9.8b" "0.9.8" "0.9.7"))))
 
 (define libssl
   (and libcrypto
-       (with-handlers ([exn:fail?
-                        (lambda (x)
-                          (set! ssl-load-fail-reason (exn-message x))
-                          #f)])
-         (ffi-lib libssl-so '("" "0.9.8b" "0.9.8" "0.9.7")))))
+       (with-handlers ([exn:fail? (λ (x)
+                                    (set! ssl-load-fail-reason (exn-message x))
+                                    #f)])
+         (ffi-lib libssl-so '("" "1.0.0c" "0.9.8i" "0.9.8b" "0.9.8" "0.9.7")))))
 
 (define libmz (ffi-lib #f))
 
@@ -96,7 +94,7 @@
             #'(define id
                 (if chk
                     (get-ffi-obj str lib (_fun . type))
-                    (lambda args (raise-not-available)))))]))]))
+                    (λ args (raise-not-available)))))]))]))
 
 (define-define-X define-crypto libcrypto libcrypto)
 (define-define-X define-ssl libssl libssl)
@@ -208,7 +206,7 @@
 (define-syntax with-failure
   (syntax-rules ()
     [(_ thunk body ...)
-     (with-handlers ([exn? (lambda (exn)
+     (with-handlers ([exn? (λ (exn)
                              (thunk)
                              (raise exn))])
        body ...)]))
@@ -222,7 +220,7 @@
   (when (ptr-equal? v #f)
     (let ([id (ERR_get_error)])
       (escape-atomic
-       (lambda ()
+       (λ ()
          (error who "~a failed ~a" what (get-error-message id)))))))
 
 (define (error/network who fmt . args)
@@ -248,13 +246,13 @@
     [(_ body ...)
      (parameterize-break
       #f
-      (with-handlers ([exn:atomic? (lambda (exn)
+      (with-handlers ([exn:atomic? (λ (exn)
                                      ((exn:atomic-thunk exn)))])
         (parameterize ([in-atomic? #t])
           (dynamic-wind
-           (lambda () (scheme_start_atomic))
-           (lambda () body ...)
-           (lambda () (scheme_end_atomic))))))]))
+           (λ () (scheme_start_atomic))
+           (λ () body ...)
+           (λ () (scheme_end_atomic))))))]))
 
 (define (escape-atomic thunk)
   (if (in-atomic?)
@@ -290,7 +288,7 @@
       (atomically
        (let* ([p (malloc 'raw n)]
               [s (make-sized-byte-string p n)])
-         (register-finalizer s (lambda (v) (free p)))
+         (register-finalizer s (λ (v) (free p)))
          s))
       ;; Normal byte string is immobile:
       (make-bytes n)))
@@ -315,7 +313,7 @@
                 TLSv1_client_method
                 TLSv1_server_method)]
      [else (escape-atomic
-            (lambda ()
+            (λ ()
               (raise-type-error
                who
                (string-append also-expect "'sslv2-or-v3, 'sslv2, 'sslv3, or 'tls")
@@ -328,7 +326,7 @@
        (check-valid ctx who "context creation")
        (SSL_CTX_set_mode ctx (bitwise-ior SSL_MODE_ENABLE_PARTIAL_WRITE
                                           SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER))
-       (register-finalizer ctx (lambda (v) (SSL_CTX_free v)))
+       (register-finalizer ctx (λ (v) (SSL_CTX_free v)))
        ((if client? make-ssl-client-context make-ssl-server-context) ctx)))))
 
 (define (ssl-make-client-context [protocol-symbol default-encrypt])
@@ -355,52 +353,57 @@
                        "SSL context or listener"
                        ssl-context-or-listener)]))
 
-(define (ssl-load-... who load-it ssl-context-or-listener pathname)
+(define (ssl-load-... who load-it ssl-context-or-listener pathname path-locale-encoding)
   (let ([ctx (get-context/listener 'ssl-load-certificate-chain!
                                    ssl-context-or-listener)])
     (unless (path-string? pathname)
       (raise-type-error 'ssl-load-certificate-chain!
                         "path or string"
                         pathname))
-    (let ([path (path->bytes
-                 (path->complete-path (cleanse-path pathname)
-                                      (current-directory)))])
-      (let ([n (load-it ctx path)])
-        (unless (= n 1)
-          (error who "load failed from: ~e ~a"
-                 pathname
-                 (get-error-message (ERR_get_error))))))))
+    (let* ([conv (bytes-open-converter "UTF-8" path-locale-encoding)]
+           [path (let-values ([(bstr len result) 
+                               (bytes-convert conv 
+                                              (path->bytes
+                                               (path->complete-path (cleanse-path pathname)
+                                                                    (current-directory))))])
+                   (bytes-close-converter conv)
+                   bstr)]
+           [n (load-it ctx path)])
+      (unless (= n 1)
+        (error who "load failed from: ~e ~a"
+               pathname
+               (get-error-message (ERR_get_error)))))))
 
-(define (ssl-load-certificate-chain! ssl-context-or-listener pathname)
+(define (ssl-load-certificate-chain! ssl-context-or-listener pathname [path-locale-encoding "UTF-8"])
   (ssl-load-... 'ssl-load-certificate-chain!
                 SSL_CTX_use_certificate_chain_file
-                ssl-context-or-listener pathname))
+                ssl-context-or-listener pathname path-locale-encoding))
 
-(define (ssl-load-verify-root-certificates! ssl-context-or-listener pathname)
+(define (ssl-load-verify-root-certificates! ssl-context-or-listener pathname [path-locale-encoding "UTF-8"])
   (ssl-load-... 'ssl-load-verify-root-certificates!
-                (lambda (a b) (SSL_CTX_load_verify_locations a b #f))
-                ssl-context-or-listener pathname))
+                (λ (a b) (SSL_CTX_load_verify_locations a b #f))
+                ssl-context-or-listener pathname path-locale-encoding))
 
-(define (ssl-load-suggested-certificate-authorities! ssl-listener pathname)
+(define (ssl-load-suggested-certificate-authorities! ssl-listener pathname [path-locale-encoding "UTF-8"])
   (ssl-load-... 'ssl-load-suggested-certificate-authorities!
-                (lambda (ctx path)
+                (λ (ctx path)
                   (let ([stk (SSL_load_client_CA_file path)])
                     (if (ptr-equal? stk #f)
                         0
                         (begin
                           (SSL_CTX_set_client_CA_list ctx stk)
                           1))))
-                ssl-listener pathname))
+                ssl-listener pathname path-locale-encoding))
 
 (define (ssl-load-private-key! ssl-context-or-listener pathname
-                               [rsa? #t] [asn1? #f])
+                               [rsa? #t] [asn1? #f] [path-locale-encoding "UTF-8"])
   (ssl-load-...
    'ssl-load-private-key!
-   (lambda (ctx path)
+   (λ (ctx path)
      ((if rsa? SSL_CTX_use_RSAPrivateKey_file SSL_CTX_use_PrivateKey_file)
       ctx path
       (if asn1? SSL_FILETYPE_ASN1 SSL_FILETYPE_PEM)))
-   ssl-context-or-listener pathname))
+   ssl-context-or-listener pathname path-locale-encoding))
 
 (define (ssl-set-verify! ssl-context-or-listener on?)
   (let ([ctx (get-context/listener 'ssl-set-verify!
@@ -494,7 +497,7 @@
      (format "SSL ~a" (object-name (mzssl-i mzssl)))
      ;; read proc:
      (letrec ([do-read
-               (lambda (buffer)
+               (λ (buffer)
                  (let ([out-blocked? (pump-output mzssl)]
                        [len (or must-read-len (min (bytes-length xfer-buffer)
                                                    (bytes-length buffer)))])
@@ -532,7 +535,7 @@
                                                  (if out-blocked?
                                                      (mzssl-o mzssl)
                                                      never-evt))
-                                                (lambda (x) 0)))
+                                                (λ (x) 0)))
                                     (do-read buffer)))]
                              [(= err SSL_ERROR_WANT_WRITE)
                               (when enforce-retry?
@@ -542,21 +545,21 @@
                                   (begin
                                     (when enforce-retry?
                                       (set-mzssl-must-read! mzssl (make-semaphore)))
-                                    (wrap-evt (mzssl-o mzssl) (lambda (x) 0))))]
+                                    (wrap-evt (mzssl-o mzssl) (λ (x) 0))))]
                              [else
                               (set! must-read-len #f)
                               ((mzssl-error mzssl) 'read-bytes
                                                    "SSL read failed ~a"
                                                    (get-error-message (ERR_get_error)))]))))))]
               [top-read
-               (lambda (buffer)
+               (λ (buffer)
                  (cond
                    [(mzssl-flushing? mzssl)
                     ;; Flush in progress; try again later:
                     0]
                    [(mzssl-must-write mzssl)
-                    => (lambda (sema)
-                         (wrap-evt (semaphore-peek-evt sema) (lambda (x) 0)))]
+                    => (λ (sema)
+                         (wrap-evt (semaphore-peek-evt sema) (λ (x) 0)))]
                    [(mzssl-r-closed? mzssl)
                     0]
                    [else
@@ -572,21 +575,16 @@
                           ;; Got previously read data:
                           n))]))]
               [lock-unavailable
-               (lambda () (wrap-evt (semaphore-peek-evt (mzssl-lock mzssl))
-                                    (lambda (x) 0)))])
-       (lambda (buffer)
-         (call-with-semaphore
-          (mzssl-lock mzssl)
-          top-read
-          lock-unavailable
-          buffer)))
+               (λ () (wrap-evt (semaphore-peek-evt (mzssl-lock mzssl)) (λ (x) 0)))])
+       (λ (buffer)
+         (call-with-semaphore (mzssl-lock mzssl) top-read lock-unavailable buffer)))
      ;; fast peek:
      #f
      ;; close proc:
-     (lambda ()
+     (λ ()
        (call-with-semaphore
         (mzssl-lock mzssl)
-        (lambda ()
+        (λ ()
           (unless (mzssl-r-closed? mzssl)
             (set-mzssl-r-closed?! mzssl #t)
             (mzssl-release mzssl))))))))
@@ -633,7 +631,7 @@
     ;; this flushing thread is analogous to the OS's job of pushing
     ;; data from a socket through the actual network device. It therefore
     ;; runs with the highest possible custodian:
-    (kernel-thread (lambda ()
+    (kernel-thread (λ ()
                      (let loop ()
                        (sync flush-ch)
                        (semaphore-wait (mzssl-lock mzssl))
@@ -648,7 +646,7 @@
      (mzssl-o mzssl)
      ;; write proc:
      (letrec ([do-write
-               (lambda (len non-block? enable-break?)
+               (λ (len non-block? enable-break?)
                  (let ([out-blocked? (pump-output mzssl)])
                    (if (zero? len)
                        ;; Flush request; all data is in the SSL
@@ -691,7 +689,7 @@
                                                      (if out-blocked?
                                                          (mzssl-o mzssl)
                                                          never-evt))
-                                                    (lambda (x) #f)))
+                                                    (λ (x) #f)))
                                         (do-write len non-block? enable-break?)))]
                                  [(= err SSL_ERROR_WANT_WRITE)
                                   (when enforce-retry?
@@ -701,14 +699,14 @@
                                       (begin
                                         (when enforce-retry?
                                           (set-mzssl-must-write! mzssl (make-semaphore)))
-                                        (wrap-evt (mzssl-o mzssl) (lambda (x) #f))))]
+                                        (wrap-evt (mzssl-o mzssl) (λ (x) #f))))]
                                  [else
                                   (set! must-write-len #f)
                                   ((mzssl-error mzssl) 'write-bytes
                                                        "SSL write failed ~a"
                                                        (get-error-message (ERR_get_error)))])))))))]
               [top-write
-               (lambda (buffer s e non-block? enable-break?)
+               (λ (buffer s e non-block? enable-break?)
                  (cond
                    [(mzssl-flushing? mzssl)
                     ;; Need to wait until flush done
@@ -716,13 +714,13 @@
                         ;; Let the background flush finish:
                         (list (semaphore-peek-evt (mzssl-flushing? mzssl)))
                         ;; Try again later:
-                        (wrap-evt always-evt (lambda (v) #f)))]
+                        (wrap-evt always-evt (λ (v) #f)))]
                    [(mzssl-w-closed? mzssl)
                     #f]
                    [(mzssl-must-read mzssl)
                     ;; Read pending, so wait until it's done:
-                    => (lambda (sema)
-                         (wrap-evt (semaphore-peek-evt sema) (lambda (x) #f)))]
+                    => (λ (sema)
+                         (wrap-evt (semaphore-peek-evt sema) (λ (x) #f)))]
                    [else
                     ;; Normal write (since no flush is active or read pending):
                     (let ([sema (mzssl-must-write mzssl)])
@@ -746,9 +744,9 @@
                             (bytes-copy! xfer-buffer 0 buffer s (+ s len))
                             (do-write len non-block? enable-break?))))]))]
               [lock-unavailable
-               (lambda () (wrap-evt (semaphore-peek-evt (mzssl-lock mzssl))
-                                    (lambda (x) #f)))])
-       (lambda (buffer s e non-block? enable-break?)
+               (λ () (wrap-evt (semaphore-peek-evt (mzssl-lock mzssl))
+                               (λ (x) #f)))])
+       (λ (buffer s e non-block? enable-break?)
          (let ([v (call-with-semaphore
                    (mzssl-lock mzssl)
                    top-write
@@ -762,7 +760,7 @@
                v))))
      ;; close proc:
      (letrec ([do-close
-               (lambda ()
+               (λ ()
                  (cond
                    [(mzssl-flushing? mzssl)
                     (semaphore-peek-evt (mzssl-flushing? mzssl))]
@@ -797,7 +795,7 @@
                     (mzssl-release mzssl)
                     #f]))]
               [close-loop
-               (lambda ()
+               (λ ()
                  (let ([v (call-with-semaphore
                            (mzssl-lock mzssl)
                            do-close)])
@@ -807,7 +805,7 @@
                          (sync v)
                          (close-loop))
                        v)))])
-       (lambda ()
+       (λ ()
          (close-loop)))
      ;; Unimplemented port methods:
      #f #f #f #f
@@ -831,30 +829,30 @@
    (let ([ctx (get-context who context-or-encrypt-method (eq? connect/accept 'connect))])
      (check-valid ctx who "context creation")
      (with-failure
-      (lambda () (when (and ctx
-                            (symbol? context-or-encrypt-method))
-                   (SSL_CTX_free ctx)))
+      (λ () (when (and ctx
+                       (symbol? context-or-encrypt-method))
+              (SSL_CTX_free ctx)))
       (let ([connect? (case connect/accept
                         [(connect) #t]
                         [(accept) #f]
                         [else
                          (escape-atomic
-                          (lambda ()
+                          (λ ()
                             (raise-type-error who "'connect or 'accept"
                                               connect/accept)))])]
             [r-bio (BIO_new (BIO_s_mem))]
             [w-bio (BIO_new (BIO_s_mem))]
             [free-bio? #t])
         (with-failure
-         (lambda () (when free-bio?
-                      (BIO_free r-bio)
-                      (BIO_free w-bio)))
+         (λ () (when free-bio?
+                 (BIO_free r-bio)
+                 (BIO_free w-bio)))
          (unless (or (symbol? context-or-encrypt-method)
                      (if connect?
                          (ssl-client-context? context-or-encrypt-method)
                          (ssl-server-context? context-or-encrypt-method)))
            (escape-atomic
-            (lambda ()
+            (λ ()
               (error who
                      "'~a mode requires a ~a context, given: ~e"
                      (if connect? 'connect 'accept)
@@ -868,14 +866,14 @@
              (SSL_CTX_free ctx)
              (set! ctx #f))
            (with-failure
-            (lambda () (SSL_free ssl))
+            (λ () (SSL_free ssl))
             (SSL_set_bio ssl r-bio w-bio)
             ;; ssl has r-bio & w-bio (no ref count?), so drop it:
             (set! free-bio? #f)
-
+            
             ;; Register a finalizer for ssl:
             (register-finalizer ssl
-                                (lambda (v)
+                                (λ (v)
                                   (when (unbox cancel)
                                     (SSL_free ssl))))
             ;; Return SSL and the cancel boxL:
@@ -987,7 +985,7 @@
     ;; the time that tcp-accept returns and `i' and `o' are bound,
     ;; anyway. So we can assume that breaks are enabled without loss
     ;; of (additional) resources.
-    (with-handlers ([void (lambda (exn)
+    (with-handlers ([void (λ (exn)
                             (close-input-port i)
                             (close-output-port o)
                             (raise exn))])
@@ -1005,7 +1003,7 @@
 (define (do-ssl-connect who tcp-connect hostname port-k client-context-or-protocol-symbol)
   (let-values ([(i o) (tcp-connect hostname port-k)])
     ;; See do-ssl-accept for note on race condition here:
-    (with-handlers ([void (lambda (exn)
+    (with-handlers ([void (λ (exn)
                             (close-input-port i)
                             (close-output-port o)
                             (raise exn))])

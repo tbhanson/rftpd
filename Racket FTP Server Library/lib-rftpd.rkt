@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.0.17
+Racket FTP Server Library v1.0.18
 ----------------------------------------------------------------------
 
 Summary:
@@ -38,22 +38,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (struct ftp-mlst-features (size? modify? perm?) #:mutable)
 
 (struct ftp-server-params 
-  (passive-ip4-ports-from
-   passive-ip4-ports-to
-   free-passive-ip4-port
+  (passive-1-ports-from
+   passive-1-ports-to
+   free-passive-1-port
    
-   passive-ip6-ports-from
-   passive-ip6-ports-to
-   free-passive-ip6-port
+   passive-2-ports-from
+   passive-2-ports-to
+   free-passive-2-port
    
-   server-ip4-host
-   server-ip6-host
+   server-1-host
+   server-2-host
    
-   server-ip4-encryption
-   server-ip6-encryption
+   server-1-encryption
+   server-2-encryption
    
-   server-ip4-certificate
-   server-ip6-certificate
+   server-1-certificate
+   server-2-certificate
    
    default-root-dir
    
@@ -117,9 +117,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (call-with-input-file sys-file
         (λ (in)
           (vector (integer-bytes->integer (read-bytes 2 in) #f) ; sysbytes
-                  (read-line in) ; owner
-                  (read-line in) ; group
-                  ))))
+                  (read-line in)                                ; owner
+                  (read-line in)))))                            ; group
     
     (define/public (ftp-file-or-dir-sysbytes sys-file)
       (call-with-input-file sys-file
@@ -271,6 +270,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define *client-host* #f)
     (define *client-input-port* #f)
     (define *client-output-port* #f)
+    (define *current-server* #f)
     (define *current-protocol* #f)
     (define *user-id* #f)
     (define *user-logged* #f)
@@ -282,7 +282,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define *file-structure* 'File)
     (define *restart-marker* #f)
     (define *active-host&port* (ftp-host&port "127.0.0.1" 20))
-    (define *passive-host&port* (ftp-host&port passive-ip4-host free-passive-ip4-port))
+    (define *passive-host&port* (ftp-host&port passive-1-host free-passive-1-port))
     (define *current-process* (make-custodian))
     (define *rename-path* #f)
     (define *locale-encoding* default-locale-encoding)
@@ -306,20 +306,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     (define/public (handle-client-request listener transfer-wait-time)
       (let ([cust (make-custodian)])
-        (with-handlers ([any/c (λ(e) 
-                                 (when *client-output-port*
-                                   (close-output-port *client-output-port*));ssl required
-                                 (custodian-shutdown-all cust))])
+        (with-handlers ([any/c (λ(e) (custodian-shutdown-all cust))])
           (parameterize ([current-custodian cust])
             (set!-values (*client-input-port* *client-output-port*) (net-accept listener))
             (let-values ([(server-host client-host) (net-addresses *client-input-port*)])
               (set! *client-host* client-host)
+              (set! *current-server* (if (and server-1-host 
+                                              (string-ci=? server-host server-1-host))
+                                         1 2))
               (set! *current-protocol* (if (IPv4? server-host) '|1| '|2|))
               (thread (λ () 
                         ;(fprintf log-output-port "[~a] Accept connection!\n" client-host)
                         (accept-client-request (connect-shutdown transfer-wait-time cust client-host))
                         ;(fprintf log-output-port "[~a] Connection close!\n" client-host)
-                        (close-output-port *client-output-port*);ssl required
                         (custodian-shutdown-all cust))))))))
     ;;
     ;; ---------- Private Methods ----------
@@ -336,7 +335,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (loop)))
                     ;(fprintf log-output-port "[~a] Auto connection close!\n" client-host)
                     ;421 No-transfer-time exceeded. Closing control connection.
-                    (close-output-port *client-output-port*);ssl required
                     (custodian-shutdown-all connect-cust)))
           reset)))
     
@@ -362,8 +360,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       (else (print-crlf/encoding** 'PLEASE-LOGIN))))))
             (reset-timer)
             (sleep .005)
-            (loop (read-request *client-input-port*)))))
-      (flush-output *client-output-port*))
+            (loop (read-request *client-input-port*))))))
     
     ;; Возвращает идентификатор(имя) пользователя
     (define (USER-COMMAND params)
@@ -429,6 +426,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (begin
             (kill-current-ftp-process)
             (print-crlf/encoding** 'QUIT)
+            (close-output-port *client-output-port*);ssl required
             (raise 'quit))))
     
     (define (PWD-COMMAND params)
@@ -1152,14 +1150,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (PASV-COMMAND params)
       (if params
           (print-crlf/encoding** 'SYNTAX-ERROR "")
-          (let-values ([(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." passive-ip4-host))]
-                       [(p1 p2) (quotient/remainder free-passive-ip4-port 256)])
-            (set! *DTP* 'passive)
-            (set! *passive-host&port* (ftp-host&port passive-ip4-host free-passive-ip4-port))
-            (free-passive-ip4-port (if (>= free-passive-ip4-port passive-ip4-ports-to)
-                                       passive-ip4-ports-from
-                                       (add1 free-passive-ip4-port)))
-            (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2))))
+          (if (eq? *current-protocol* '|1|)
+              (if (= *current-server* 1)
+                  (let-values ([(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." passive-1-host))]
+                               [(p1 p2) (quotient/remainder free-passive-1-port 256)])
+                    (set! *DTP* 'passive)
+                    (set! *passive-host&port* (ftp-host&port passive-1-host free-passive-1-port))
+                    (free-passive-1-port (if (>= free-passive-1-port passive-1-ports-to)
+                                             passive-1-ports-from
+                                             (add1 free-passive-1-port)))
+                    (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2))
+                  (let-values ([(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." passive-2-host))]
+                               [(p1 p2) (quotient/remainder free-passive-2-port 256)])
+                    (set! *DTP* 'passive)
+                    (set! *passive-host&port* (ftp-host&port passive-2-host free-passive-2-port))
+                    (free-passive-2-port (if (>= free-passive-2-port passive-2-ports-to)
+                                             passive-2-ports-from
+                                             (add1 free-passive-2-port)))
+                    (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2)))
+              (print-crlf/encoding** 'BAD-PROTOCOL))))
     
     ;; Experimental
     (define (EPRT-COMMAND params)
@@ -1180,25 +1189,28 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     ;; Experimental
     (define (EPSV-COMMAND params)
-      (local [(define (epsv-1)
-                (if passive-ip4-host
-                    (begin
-                      (set! *DTP* 'passive)
-                      (set! *passive-host&port* (ftp-host&port passive-ip4-host free-passive-ip4-port))
-                      (free-passive-ip4-port (if (>= free-passive-ip4-port passive-ip4-ports-to)
-                                                 passive-ip4-ports-from
-                                                 (add1 free-passive-ip4-port)))
-                      (print-crlf/encoding** 'EPSV free-passive-ip4-port))
+      (local [(define (set-psv)
+                (set! *DTP* 'passive)
+                (case *current-server*
+                  ((1)
+                   (set! *passive-host&port* (ftp-host&port passive-1-host free-passive-1-port))
+                   (print-crlf/encoding** 'EPSV free-passive-1-port)
+                   (free-passive-1-port (if (>= free-passive-1-port passive-1-ports-to)
+                                            passive-1-ports-from
+                                            (add1 free-passive-1-port))))
+                  ((2)
+                   (set! *passive-host&port* (ftp-host&port passive-2-host free-passive-2-port))
+                   (print-crlf/encoding** 'EPSV free-passive-2-port)
+                   (free-passive-2-port (if (>= free-passive-2-port passive-2-ports-to)
+                                            passive-2-ports-from
+                                            (add1 free-passive-2-port))))))
+              (define (epsv-1)
+                (if (eq? *current-protocol* '|1|)
+                    (set-psv)
                     (print-crlf/encoding** 'BAD-PROTOCOL)))
               (define (epsv-2)
-                (if passive-ip6-host
-                    (begin
-                      (set! *DTP* 'passive)
-                      (set! *passive-host&port* (ftp-host&port passive-ip6-host free-passive-ip6-port))
-                      (free-passive-ip6-port (if (>= free-passive-ip6-port passive-ip6-ports-to)
-                                                 passive-ip6-ports-from
-                                                 (add1 free-passive-ip6-port)))
-                      (print-crlf/encoding** 'EPSV free-passive-ip6-port))
+                (if (eq? *current-protocol* '|2|)
+                    (set-psv)
                     (print-crlf/encoding** 'BAD-PROTOCOL)))
               (define (epsv)
                 (if (eq? *current-protocol* '|1|) (epsv-1) (epsv-2)))]
@@ -1253,6 +1265,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 ((Image)
                                  (write-bytes data out))))
                           (flush-output out)
+                          ;(close-input-port in);ssl required
                           ;(close-output-port out);ssl required
                           (print-crlf/encoding** 'TRANSFER-OK)))
                       ;(displayln  "Process complete!" log-output-port)
@@ -1276,8 +1289,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                            (ssl-listen port (random 123456789) #t host encryption)
                                            (tcp-listen port 1 #t host))])
                         (when encryption
-                          (ssl-load-certificate-chain! listener server-ip4-certificate)
-                          (ssl-load-private-key! listener server-ip4-certificate))
+                          (ssl-load-certificate-chain! listener server-1-certificate default-locale-encoding)
+                          (ssl-load-private-key! listener server-1-certificate #t #f default-locale-encoding))
                         (let-values ([(in out) (net-accept listener)])
                           (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
                           (if file?
@@ -1366,8 +1379,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                (ssl-listen port (random 123456789) #t host encryption)
                                                (tcp-listen port 1 #t host))])
                             (when encryption
-                              (ssl-load-certificate-chain! listener server-ip4-certificate)
-                              (ssl-load-private-key! listener server-ip4-certificate))
+                              (ssl-load-certificate-chain! listener server-1-certificate default-locale-encoding)
+                              (ssl-load-private-key! listener server-1-certificate #t #f default-locale-encoding))
                             (let-values ([(in out) (net-accept listener)])
                               (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
                               (when *restart-marker*
@@ -1391,31 +1404,35 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   ;(displayln "Auto kill working process!" log-output-port)
                   (custodian-shutdown-all *current-process*)))))
     
-    ;(define (current-passive-host&port
+    (define-syntax (server-1-host stx)
+      #'(ftp-server-params-server-1-host server-params))
     
-    (define-syntax (passive-ip4-host stx)
-      #'(ftp-server-params-server-ip4-host server-params))
+    (define-syntax (server-2-host stx)
+      #'(ftp-server-params-server-2-host server-params))
     
-    (define-syntax (passive-ip6-host stx)
-      #'(ftp-server-params-server-ip6-host server-params))
+    (define-syntax (passive-1-host stx)
+      #'server-1-host)
     
-    (define-syntax (passive-ip4-ports-from stx)
-      #'(ftp-server-params-passive-ip4-ports-from server-params))
+    (define-syntax (passive-2-host stx)
+      #'server-2-host)
     
-    (define-syntax (passive-ip4-ports-to stx)
-      #'(ftp-server-params-passive-ip4-ports-to server-params))
+    (define-syntax (passive-1-ports-from stx)
+      #'(ftp-server-params-passive-1-ports-from server-params))
     
-    (define-syntax (passive-ip6-ports-from stx)
-      #'(ftp-server-params-passive-ip6-ports-from server-params))
+    (define-syntax (passive-1-ports-to stx)
+      #'(ftp-server-params-passive-1-ports-to server-params))
     
-    (define-syntax (passive-ip6-ports-to stx)
-      #'(ftp-server-params-passive-ip6-ports-to server-params))
+    (define-syntax (passive-2-ports-from stx)
+      #'(ftp-server-params-passive-2-ports-from server-params))
     
-    (define-syntax (server-ip4-certificate stx)
-      #'(ftp-server-params-server-ip4-certificate server-params))
+    (define-syntax (passive-2-ports-to stx)
+      #'(ftp-server-params-passive-2-ports-to server-params))
     
-    (define-syntax (server-ip6-certificate stx)
-      #'(ftp-server-params-server-ip6-certificate server-params))
+    (define-syntax (server-1-certificate stx)
+      #'(ftp-server-params-server-1-certificate server-params))
+    
+    (define-syntax (server-2-certificate stx)
+      #'(ftp-server-params-server-2-certificate server-params))
     
     (define-syntax (default-root-dir stx)
       #'(ftp-server-params-default-root-dir server-params))
@@ -1435,15 +1452,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax (kill-current-ftp-process stx)
       #'(custodian-shutdown-all *current-process*))
     
-    (define-syntax (free-passive-ip4-port stx)
+    (define-syntax (free-passive-1-port stx)
       (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-free-passive-ip4-port! server-params expr)]
-        [_ #'(ftp-server-params-free-passive-ip4-port server-params)]))
+        [(_ expr) #'(set-ftp-server-params-free-passive-1-port! server-params expr)]
+        [_ #'(ftp-server-params-free-passive-1-port server-params)]))
     
-    (define-syntax (free-passive-ip6-port stx)
+    (define-syntax (free-passive-2-port stx)
       (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-free-passive-ip6-port! server-params expr)]
-        [_ #'(ftp-server-params-free-passive-ip6-port server-params)]))
+        [(_ expr) #'(set-ftp-server-params-free-passive-2-port! server-params expr)]
+        [_ #'(ftp-server-params-free-passive-2-port server-params)]))
     
     (define (read-request input-port)
       (if (byte-ready? input-port)
@@ -1465,7 +1482,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (set! list-string->bytes/locale-encoding (λ (str) (string->bytes/utf-8 str))))
           (begin
             (set! print/locale-encoding (λ (output-port text) (print/encoding *locale-encoding* output-port text)))
-            (set! request-bytes->string/locale-encoding (λ (bstr) (request-bytes->string/encoding *locale-encoding* bstr)))
+            (set! request-bytes->string/locale-encoding (λ (bstr) 
+                                                          (request-bytes->string/encoding *locale-encoding* bstr)))
             (set! list-string->bytes/locale-encoding (λ (str) (list-string->bytes/encoding *locale-encoding* str))))))
     
     (define (print-crlf/encoding* text)
@@ -1730,23 +1748,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     (init-field [welcome-message         "Racket FTP Server!"]
                 
-                [server-ip4-host         "127.0.0.1"]
-                [server-ip4-port         21]
-                [server-ip4-encryption   #f]
-                [server-ip4-certificate  "certs/ip4.pem"]
+                [server-1-host         "127.0.0.1"]
+                [server-1-port         21]
+                [server-1-encryption   #f]
+                [server-1-certificate  "certs/server-1.pem"]
                 
-                [server-ip6-host         "::1"]
-                [server-ip6-port         21]
-                [server-ip6-encryption   #f]
-                [server-ip6-certificate  "certs/ip6.pem"]
+                [server-2-host         "::1"]
+                [server-2-port         21]
+                [server-2-encryption   #f]
+                [server-2-certificate  "certs/server-2.pem"]
                 
                 [max-allow-wait          50]
                 [transfer-wait-time      120]
                 
-                [passive-ip4-ports-from  40000]
-                [passive-ip4-ports-to    40599]
-                [passive-ip6-ports-from  40000]
-                [passive-ip6-ports-to    40599]
+                [passive-1-ports-from  40000]
+                [passive-1-ports-to    40599]
+                [passive-2-ports-from  40000]
+                [passive-2-ports-to    40599]
                 
                 [default-root-dir        "ftp-dir"]
                 [default-locale-encoding "UTF-8"]
@@ -1758,8 +1776,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define state 'stopped)
     (define server-custodian #f)
     (define server-ftp-users (make-hash))
-    (define server-ip4-thread #f)
-    (define server-ip6-thread #f)
+    (define server-1-thread #f)
+    (define server-2-thread #f)
     ;;
     ;; ---------- Public Methods ----------
     ;;
@@ -1787,54 +1805,54 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define/public (run)
       (when (eq? state 'stopped)
         (set! server-custodian (make-custodian))
-        (set! server-params (ftp-server-params passive-ip4-ports-from
-                                               passive-ip4-ports-to
-                                               passive-ip4-ports-from  ;free-passive-ip4-port
-                                               passive-ip6-ports-from
-                                               passive-ip6-ports-to 
-                                               passive-ip6-ports-from  ;free-passive-ip6-port
-                                               server-ip4-host
-                                               server-ip6-host
-                                               server-ip4-encryption
-                                               server-ip6-encryption
-                                               server-ip4-certificate
-                                               server-ip6-certificate
+        (set! server-params (ftp-server-params passive-1-ports-from
+                                               passive-1-ports-to
+                                               passive-1-ports-from  ;free-passive-1-port
+                                               passive-2-ports-from
+                                               passive-2-ports-to 
+                                               passive-2-ports-from  ;free-passive-2-port
+                                               server-1-host
+                                               server-2-host
+                                               server-1-encryption
+                                               server-2-encryption
+                                               server-1-certificate
+                                               server-2-certificate
                                                default-root-dir
                                                default-locale-encoding
                                                log-output-port
                                                server-ftp-users))      ;ftp-users
         (init-ftp-dirs default-root-dir)
         (parameterize ([current-custodian server-custodian])
-          (when server-ip4-host
-            (let ([listener (if server-ip4-encryption
-                                (ssl-listen server-ip4-port (random 123456789) #t server-ip4-host server-ip4-encryption)
-                                (tcp-listen server-ip4-port max-allow-wait #t server-ip4-host))])
-              (when server-ip4-encryption
-                (ssl-load-certificate-chain! listener server-ip4-certificate)
-                (ssl-load-private-key! listener server-ip4-certificate))
+          (when server-1-host
+            (let ([listener (if server-1-encryption
+                                (ssl-listen server-1-port (random 123456789) #t server-1-host server-1-encryption)
+                                (tcp-listen server-1-port max-allow-wait #t server-1-host))])
+              (when server-1-encryption
+                (ssl-load-certificate-chain! listener server-1-certificate default-locale-encoding)
+                (ssl-load-private-key! listener server-1-certificate #t #f default-locale-encoding))
               (letrec ([main-loop (λ ()
                                     (send (new ftp-session% 
                                                [server-params server-params]
-                                               [encryption server-ip4-encryption]
+                                               [encryption server-1-encryption]
                                                [welcome-message welcome-message])
                                           handle-client-request listener transfer-wait-time)
                                     (main-loop))])
-                (set! server-ip4-thread (thread main-loop)))))
-          (when server-ip6-host
-            (let ([listener (if server-ip6-encryption
-                                (ssl-listen server-ip6-port (random 123456789) #t server-ip6-host server-ip6-encryption)
-                                (tcp-listen server-ip6-port max-allow-wait #t server-ip6-host))])
-              (when server-ip6-encryption
-                (ssl-load-certificate-chain! listener server-ip6-certificate)
-                (ssl-load-private-key! listener server-ip6-certificate))
+                (set! server-1-thread (thread main-loop)))))
+          (when server-2-host
+            (let ([listener (if server-2-encryption
+                                (ssl-listen server-2-port (random 123456789) #t server-2-host server-2-encryption)
+                                (tcp-listen server-2-port max-allow-wait #t server-2-host))])
+              (when server-2-encryption
+                (ssl-load-certificate-chain! listener server-2-certificate default-locale-encoding)
+                (ssl-load-private-key! listener server-2-certificate #t #f default-locale-encoding))
               (letrec ([main-loop (λ ()
                                     (send (new ftp-session% 
                                                [server-params server-params]
-                                               [encryption server-ip6-encryption]
+                                               [encryption server-2-encryption]
                                                [welcome-message welcome-message])
                                           handle-client-request listener transfer-wait-time)
                                     (main-loop))])
-                (set! server-ip4-thread (thread main-loop))))))
+                (set! server-1-thread (thread main-loop))))))
         (set! state 'running)))
     
     (define/public (stop)
@@ -1850,18 +1868,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (unless (ftp-dir-exists? root-dir)
         (ftp-mkdir* root-dir)))
     
-    (define-syntax (passive-ip4-host stx) #'server-ip4-host)
+    (define-syntax (passive-1-host stx) #'server-1-host)
     
-    (define-syntax (passive-ip6-host stx) #'server-ip6-host)
+    (define-syntax (passive-2-host stx) #'server-2-host)
     
-    (define-syntax (passive-ip4-listeners stx)
+    (define-syntax (passive-1-listeners stx)
       (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-passive-ip4-listeners! server-params expr)]
-        [_ #'(ftp-server-params-passive-ip4-listeners server-params)]))
+        [(_ expr) #'(set-ftp-server-params-passive-1-listeners! server-params expr)]
+        [_ #'(ftp-server-params-passive-1-listeners server-params)]))
     
-    (define-syntax (passive-ip6-listeners stx)
+    (define-syntax (passive-2-listeners stx)
       (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-passive-ip6-listeners! server-params expr)]
-        [_ #'(ftp-server-params-passive-ip6-listeners server-params)]))
+        [(_ expr) #'(set-ftp-server-params-passive-2-listeners! server-params expr)]
+        [_ #'(ftp-server-params-passive-2-listeners server-params)]))
     
     (super-new)))
