@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.0.11
+Racket FTP Server v1.0.12
 ----------------------------------------------------------------------
 
 Summary:
@@ -33,23 +33,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [name&version "Racket FTP Server v1.0.11"]
+    (init-field [name&version "Racket FTP Server v1.0.12"]
                 [copyright "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 
-                [server-ip4-host        "127.0.0.1"]
-                [server-ip4-port        21]
-                [server-ip4-encryption  #f]
-                [server-ip4-certificate "certs/ip4.pem"]
+                [server-1-host        "127.0.0.1"]
+                [server-1-port        21]
+                [server-1-encryption  #f]
+                [server-1-certificate "certs/server-1.pem"]
                 
-                [server-ip6-host        "::1"]
-                [server-ip6-port        21]
-                [server-ip6-encryption  #f]
-                [server-ip6-certificate "certs/ip6.pem"]
+                [server-2-host        "::1"]
+                [server-2-port        21]
+                [server-2-encryption  #f]
+                [server-2-certificate "certs/server-2.pem"]
                 
                 [server-max-allow-wait 50]
                 
-                [passive-ip4-ports '(40000 . 40599)]
-                [passive-ip6-ports '(40000 . 40599)]
+                [passive-1-ports '(40000 . 40599)]
+                [passive-2-ports '(40000 . 40599)]
                 
                 [control-passwd "12345"]
                 [control-host "127.0.0.1"]
@@ -74,19 +74,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (set! log-out (open-output-file log-file #:exists 'append)))
       (set! server (new ftp:ftp-server% 
                         [welcome-message name&version]
-                        [server-ip4-host server-ip4-host]
-                        [server-ip4-port server-ip4-port]
-                        [server-ip4-encryption server-ip4-encryption]
-                        [server-ip4-certificate server-ip4-certificate]
-                        [server-ip6-host server-ip6-host]
-                        [server-ip6-port server-ip6-port]
-                        [server-ip6-encryption server-ip6-encryption]
-                        [server-ip6-certificate server-ip6-certificate]
+                        [server-1-host server-1-host]
+                        [server-1-port server-1-port]
+                        [server-1-encryption server-1-encryption]
+                        [server-1-certificate server-1-certificate]
+                        [server-2-host server-2-host]
+                        [server-2-port server-2-port]
+                        [server-2-encryption server-2-encryption]
+                        [server-2-certificate server-2-certificate]
                         [max-allow-wait server-max-allow-wait]
-                        [passive-ip4-ports-from (car passive-ip4-ports)]
-                        [passive-ip4-ports-to (cdr passive-ip4-ports)]
-                        [passive-ip6-ports-from (car passive-ip6-ports)]
-                        [passive-ip6-ports-to (cdr passive-ip6-ports)]
+                        [passive-1-ports-from (car passive-1-ports)]
+                        [passive-1-ports-to (cdr passive-1-ports)]
+                        [passive-2-ports-from (car passive-2-ports)]
+                        [passive-2-ports-to (cdr passive-2-ports)]
                         [default-root-dir default-root-dir]
                         [default-locale-encoding default-locale-encoding]
                         [log-output-port log-out]))
@@ -105,8 +105,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (let ([cust (make-custodian)])
         (parameterize ([current-custodian cust])
           (let ([listener (ssl-listen control-port (random 123456789) #t control-host 'sslv3)])
-            (ssl-load-certificate-chain! listener control-cert-file)
-            (ssl-load-private-key! listener control-cert-file)
+            (ssl-load-certificate-chain! listener control-cert-file default-locale-encoding)
+            (ssl-load-private-key! listener control-cert-file #t #f default-locale-encoding)
             (letrec ([main-loop (λ ()
                                   (handle-client-request listener)
                                   (main-loop))])
@@ -172,26 +172,26 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (when (eq? (car conf) 'ftp-server-config)
               (for-each (λ (param)
                           (case (car param)
-                            ((server-ip4)
+                            ((server-1)
                              (with-handlers ([any/c void])
-                               (set! server-ip4-host (second param))
-                               (set! server-ip4-port (third param))
-                               (set! server-ip4-encryption (fourth param))))
-                            ((server-ip4-certificate)
-                             (set! server-ip4-certificate (second param)))
-                            ((server-ip6)
+                               (set! server-1-host (second param))
+                               (set! server-1-port (third param))
+                               (set! server-1-encryption (fourth param))))
+                            ((server-1-certificate)
+                             (set! server-1-certificate (second param)))
+                            ((server-2)
                              (with-handlers ([any/c void])
-                               (set! server-ip6-host (second param))
-                               (set! server-ip6-port (third param))
-                               (set! server-ip6-encryption (fourth param))))
-                            ((server-ip6-certificate)
-                             (set! server-ip6-certificate (second param)))
+                               (set! server-2-host (second param))
+                               (set! server-2-port (third param))
+                               (set! server-2-encryption (fourth param))))
+                            ((server-2-certificate)
+                             (set! server-2-certificate (second param)))
                             ((max-allow-wait)
                              (set! server-max-allow-wait (second param)))
-                            ((passive-ip4-ports)
-                             (set! passive-ip4-ports (cons (second param) (third param))))
-                            ((passive-ip6-ports)
-                             (set! passive-ip6-ports (cons (second param) (third param))))
+                            ((passive-1-ports)
+                             (set! passive-1-ports (cons (second param) (third param))))
+                            ((passive-2-ports)
+                             (set! passive-2-ports (cons (second param) (third param))))
                             ((default-locale-encoding)
                              (set! default-locale-encoding (second param)))
                             ((default-root-dir)
