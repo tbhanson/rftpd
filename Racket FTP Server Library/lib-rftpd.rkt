@@ -1289,8 +1289,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                            (ssl-listen port (random 123456789) #t host encryption)
                                            (tcp-listen port 1 #t host))])
                         (when encryption
-                          (ssl-load-certificate-chain! listener server-1-certificate default-locale-encoding)
-                          (ssl-load-private-key! listener server-1-certificate #t #f default-locale-encoding))
+                          (case *current-server*
+                            ((1)
+                             (ssl-load-certificate-chain! listener server-1-certificate default-locale-encoding)
+                             (ssl-load-private-key! listener server-1-certificate #t #f default-locale-encoding))
+                            ((2)
+                             (ssl-load-certificate-chain! listener server-2-certificate default-locale-encoding)
+                             (ssl-load-private-key! listener server-2-certificate #t #f default-locale-encoding))))
                         (let-values ([(in out) (net-accept listener)])
                           (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
                           (if file?
@@ -1379,8 +1384,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                (ssl-listen port (random 123456789) #t host encryption)
                                                (tcp-listen port 1 #t host))])
                             (when encryption
-                              (ssl-load-certificate-chain! listener server-1-certificate default-locale-encoding)
-                              (ssl-load-private-key! listener server-1-certificate #t #f default-locale-encoding))
+                              (case *current-server*
+                                ((1)
+                                 (ssl-load-certificate-chain! listener server-1-certificate default-locale-encoding)
+                                 (ssl-load-private-key! listener server-1-certificate #t #f default-locale-encoding))
+                                ((2)
+                                 (ssl-load-certificate-chain! listener server-2-certificate default-locale-encoding)
+                                 (ssl-load-private-key! listener server-2-certificate #t #f default-locale-encoding))))
                             (let-values ([(in out) (net-accept listener)])
                               (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
                               (when *restart-marker*
