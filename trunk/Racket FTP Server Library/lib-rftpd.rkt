@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.0.18
+Racket FTP Server Library v1.1.0
 ----------------------------------------------------------------------
 
 Summary:
@@ -49,11 +49,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    server-1-host
    server-2-host
    
-   server-1-encryption
-   server-2-encryption
+   ;server-1-encryption
+   ;server-2-encryption
    
-   server-1-certificate
-   server-2-certificate
+   ;server-1-certificate
+   ;server-2-certificate
+   
+   ;server-1-ssl-context
+   ;server-2-ssl-context
    
    default-root-dir
    
@@ -234,11 +237,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (bytes-close-converter conv)
           bstr)))
     
+    (define/public (alarm-clock period count [event (λ() 1)])
+      (let* ([tick count]
+             [reset (λ () (set! tick count))])
+        (thread (λ ()
+                  (do () [(<= tick 0) (event)]
+                    (sleep period)
+                    (set! tick (sub1 tick)))))
+        reset))
+    
     (super-new)))
 
 (define ftp-session%
   (class ftp-utils%
     (inherit get-params
+             alarm-clock
              IPv4?
              IPv6?
              print/encoding
@@ -263,7 +276,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     (init-field server-params
                 welcome-message
-                encryption)
+                [ssl-server-context #f]
+                [ssl-client-context #f])
     ;;
     ;; ---------- Private Definitions ----------
     ;;
@@ -293,11 +307,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define print/locale-encoding #f)
     (define request-bytes->string/locale-encoding #f)
     (define list-string->bytes/locale-encoding #f)
-    (define net-accept (if encryption ssl-accept tcp-accept))
-    (define net-addresses (if encryption ssl-addresses tcp-addresses))
-    (define net-connect (if encryption (λ(host port) (ssl-connect host port encryption)) tcp-connect))
-    (define net-close (if encryption ssl-close tcp-close))
-    (define net-abandon-port (if encryption ssl-abandon-port tcp-abandon-port))
+    (define net-accept (if ssl-server-context ssl-accept tcp-accept))
+    (define net-addresses (if ssl-server-context ssl-addresses tcp-addresses))
+    (define net-connect (if ssl-client-context 
+                            (λ(host port)
+                              (ssl-connect host port ssl-client-context))
+                            tcp-connect))
+    (define net-close (if ssl-server-context ssl-close tcp-close))
+    (define net-abandon-port (if ssl-server-context ssl-abandon-port tcp-abandon-port))
     (define *cmd-list* null)
     (define *cmd-voc* #f)
     (define *server-responses* #f)
@@ -317,26 +334,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (set! *current-protocol* (if (IPv4? server-host) '|1| '|2|))
               (thread (λ () 
                         ;(fprintf log-output-port "[~a] Accept connection!\n" client-host)
-                        (accept-client-request (connect-shutdown transfer-wait-time cust client-host))
+                        (accept-client-request (connect-shutdown transfer-wait-time cust))
                         ;(fprintf log-output-port "[~a] Connection close!\n" client-host)
                         (custodian-shutdown-all cust))))))))
     ;;
     ;; ---------- Private Methods ----------
     ;;
-    (define (connect-shutdown time connect-cust client-host)
-      (parameterize ([current-custodian connect-cust])
-        (let* ([tick time]
-               [reset (λ () (set! tick time))])
-          (thread (λ ()
-                    (let loop ()
-                      (when (> tick 0)
-                        (sleep 1)
-                        (set! tick (sub1 tick))
-                        (loop)))
-                    ;(fprintf log-output-port "[~a] Auto connection close!\n" client-host)
-                    ;421 No-transfer-time exceeded. Closing control connection.
-                    (custodian-shutdown-all connect-cust)))
-          reset)))
+    (define (connect-shutdown time connect-cust)
+      (alarm-clock 1 time 
+                   (λ() 
+                     ;(fprintf log-output-port "[~a] Auto connection close!\n" *client-host*)
+                     ;421 No-transfer-time exceeded. Closing control connection.
+                     (custodian-shutdown-all connect-cust))))
     
     (define (accept-client-request [reset-timer void])
       (with-handlers ([any/c #|displayln|# void])
@@ -486,12 +495,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (if params
           (print-crlf/encoding** 'CLNT)
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
-    
+    ; error!
     (define (PROT-COMMAND params)
       (if params
           (print-crlf/encoding* "200 Protection level set to P")
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
-    
+    ; error!
     (define (PBSZ-COMMAND params)
       (if params
           (print-crlf/encoding* "200 PBSZ=0")
@@ -1248,32 +1257,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (thread (λ ()
                     (parameterize ([current-custodian *current-process*])
                       (with-handlers ([any/c (λ (e)
-                                               ;(displayln e)
+                                               (printf "~s:~a\n" host port)
+                                               (displayln e)
                                                (print-crlf/encoding** 'TRANSFER-ABORTED))])
                         (let-values ([(in out) (net-connect host port)])
                           (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
-                          (if file?
-                              (call-with-input-file data
-                                (λ (in)
-                                  (let loop ([dat (read-bytes 10048576 in)])
-                                    (unless (eof-object? dat)
-                                      (write-bytes dat out)
-                                      (loop (read-bytes 10048576 in))))))
-                              (case *representation-type*
-                                ((ASCII)
-                                 (print/locale-encoding out data))
-                                ((Image)
-                                 (write-bytes data out))))
+                          (let ([reset-alarm (alarm-clock 1 15 
+                                                          (λ()
+                                                            ;(displayln "Auto kill working process!" log-output-port)
+                                                            (custodian-shutdown-all *current-process*)))])
+                            (if file?
+                                (call-with-input-file data
+                                  (λ (in)
+                                    (let loop ([dat (read-bytes 1048576 in)])
+                                      (reset-alarm)
+                                      (unless (eof-object? dat)
+                                        (write-bytes dat out)
+                                        (loop (read-bytes 1048576 in))))))
+                                (case *representation-type*
+                                  ((ASCII)
+                                   (print/locale-encoding out data))
+                                  ((Image)
+                                   (write-bytes data out)))))
                           (flush-output out)
                           ;(close-input-port in);ssl required
                           ;(close-output-port out);ssl required
                           (print-crlf/encoding** 'TRANSFER-OK)))
                       ;(displayln  "Process complete!" log-output-port)
-                      (custodian-shutdown-all *current-process*))))
-          (thread (λ ()
-                    (sleep 600)
-                    ;(displayln "Auto kill working process!" log-output-port)
-                    (custodian-shutdown-all *current-process*))))))
+                      (custodian-shutdown-all *current-process*)))))))
     
     ;; Experimental
     (define (passive-data-transfer data file?)
@@ -1285,40 +1296,33 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                              (print-crlf/encoding** 'TRANSFER-ABORTED))])
                       (let* ([host (ftp-host&port-host *passive-host&port*)]
                              [port (ftp-host&port-port *passive-host&port*)]
-                             [listener (if encryption
-                                           (ssl-listen port (random 123456789) #t host encryption)
+                             [listener (if ssl-server-context
+                                           (ssl-listen port (random 123456789) #t host ssl-server-context)
                                            (tcp-listen port 1 #t host))])
-                        (when encryption
-                          (case *current-server*
-                            ((1)
-                             (ssl-load-certificate-chain! listener server-1-certificate default-locale-encoding)
-                             (ssl-load-private-key! listener server-1-certificate #t #f default-locale-encoding))
-                            ((2)
-                             (ssl-load-certificate-chain! listener server-2-certificate default-locale-encoding)
-                             (ssl-load-private-key! listener server-2-certificate #t #f default-locale-encoding))))
                         (let-values ([(in out) (net-accept listener)])
                           (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
-                          (if file?
-                              (call-with-input-file data
-                                (λ (in)
-                                  (let loop ([dat (read-bytes 10048576 in)])
-                                    (unless (eof-object? dat)
-                                      (write-bytes dat out)
-                                      (loop (read-bytes 10048576 in))))))
-                              (case *representation-type*
-                                ((ASCII)
-                                 (print/locale-encoding out data))
-                                ((Image)
-                                 (write-bytes data out))))
+                          (let ([reset-alarm (alarm-clock 1 15 
+                                                          (λ()
+                                                            ;(displayln "Auto kill working process!" log-output-port)
+                                                            (custodian-shutdown-all *current-process*)))])
+                            (if file?
+                                (call-with-input-file data
+                                  (λ (in)
+                                    (let loop ([dat (read-bytes 1048576 in)])
+                                      (reset-alarm)
+                                      (unless (eof-object? dat)
+                                        (write-bytes dat out)
+                                        (loop (read-bytes 1048576 in))))))
+                                (case *representation-type*
+                                  ((ASCII)
+                                   (print/locale-encoding out data))
+                                  ((Image)
+                                   (write-bytes data out)))))
                           ;(flush-output out)
                           (close-output-port out);ssl required
                           (print-crlf/encoding** 'TRANSFER-OK))))
                     ;(displayln "Process complete!" log-output-port)
-                    (custodian-shutdown-all *current-process*))))
-        (thread (λ ()
-                  (sleep 600)
-                  ;(displayln "Auto kill working process!" log-output-port)
-                  (custodian-shutdown-all *current-process*)))))
+                    (custodian-shutdown-all *current-process*))))))
     
     (define (ftp-store-file new-file-full-path exists-mode)
       (case *DTP*
@@ -1347,10 +1351,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (when *restart-marker*
                                 (file-position fout *restart-marker*)
                                 (set! *restart-marker* #f))
-                              (let loop ([dat (read-bytes 10048576 in)])
-                                (unless (eof-object? dat)
-                                  (write-bytes dat fout)
-                                  (loop (read-bytes 10048576 in))))
+                              (let ([reset-alarm (alarm-clock 1 15 
+                                                              (λ()
+                                                                ;(displayln "Auto kill working process!" log-output-port)
+                                                                (custodian-shutdown-all *current-process*)))])
+                                (let loop ([dat (read-bytes 1048576 in)])
+                                  (reset-alarm)
+                                  (unless (eof-object? dat)
+                                    (write-bytes dat fout)
+                                    (loop (read-bytes 1048576 in)))))
                               (flush-output fout)
                               (print-log-event (format "~a data to file ~a"
                                                        (if (eq? exists-mode 'append) "Append" "Store")
@@ -1359,10 +1368,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" log-output-port)
-                    (custodian-shutdown-all *current-process*)))
-          (thread (λ ()
-                    (sleep 600)
-                    ;(displayln "Auto kill working process!" log-output-port)
                     (custodian-shutdown-all *current-process*))))))
     
     ;; Experimental
@@ -1380,26 +1385,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (parameterize ([current-custodian *current-process*])
                           (let* ([host (ftp-host&port-host *passive-host&port*)]
                                  [port (ftp-host&port-port *passive-host&port*)]
-                                 [listener (if encryption
-                                               (ssl-listen port (random 123456789) #t host encryption)
+                                 [listener (if ssl-server-context
+                                               (ssl-listen port (random 123456789) #t host ssl-server-context)
                                                (tcp-listen port 1 #t host))])
-                            (when encryption
-                              (case *current-server*
-                                ((1)
-                                 (ssl-load-certificate-chain! listener server-1-certificate default-locale-encoding)
-                                 (ssl-load-private-key! listener server-1-certificate #t #f default-locale-encoding))
-                                ((2)
-                                 (ssl-load-certificate-chain! listener server-2-certificate default-locale-encoding)
-                                 (ssl-load-private-key! listener server-2-certificate #t #f default-locale-encoding))))
                             (let-values ([(in out) (net-accept listener)])
                               (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
                               (when *restart-marker*
                                 (file-position fout *restart-marker*)
                                 (set! *restart-marker* #f))
-                              (let loop ([dat (read-bytes 10048576 in)])
-                                (unless (eof-object? dat)
-                                  (write-bytes dat fout)
-                                  (loop (read-bytes 10048576 in))))
+                              (let ([reset-alarm (alarm-clock 1 15 
+                                                              (λ()
+                                                                ;(displayln "Auto kill working process!" log-output-port)
+                                                                (custodian-shutdown-all *current-process*)))])
+                                (let loop ([dat (read-bytes 1048576 in)])
+                                  (reset-alarm)
+                                  (unless (eof-object? dat)
+                                    (write-bytes dat fout)
+                                    (loop (read-bytes 1048576 in)))))
                               (flush-output fout)
                               (print-log-event (format "~a data to file ~a"
                                                        (if (eq? exists-mode 'append) "Append" "Store")
@@ -1408,10 +1410,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       #:mode 'binary
                       #:exists exists-mode))
                   ;(displayln "Process complete!" log-output-port)
-                  (custodian-shutdown-all *current-process*)))
-        (thread (λ ()
-                  (sleep 600)
-                  ;(displayln "Auto kill working process!" log-output-port)
                   (custodian-shutdown-all *current-process*)))))
     
     (define-syntax (server-1-host stx)
@@ -1437,12 +1435,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define-syntax (passive-2-ports-to stx)
       #'(ftp-server-params-passive-2-ports-to server-params))
-    
-    (define-syntax (server-1-certificate stx)
-      #'(ftp-server-params-server-1-certificate server-params))
-    
-    (define-syntax (server-2-certificate stx)
-      #'(ftp-server-params-server-2-certificate server-params))
     
     (define-syntax (default-root-dir stx)
       #'(ftp-server-params-default-root-dir server-params))
@@ -1593,11 +1585,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("OPTS" ,OPTS-COMMAND . "OPTS <SP> <command-name> [<SP> <command-options>]")
               ("PASS" ,PASS-COMMAND . "PASS <SP> <password>")
               ("PASV" ,PASV-COMMAND . "PASV")
+              ("PBSZ" ,PBSZ-COMMAND . "PBSZ <SP> <num>") ; error!
               ("PORT" ,PORT-COMMAND . "PORT <SP> <host-port>")
-              ;
-              ("PROT" ,PROT-COMMAND . "PROT <SP> <code>")
-              ("PBSZ" ,PBSZ-COMMAND . "PBSZ <SP> <num>")
-              ;
+              ("PROT" ,PROT-COMMAND . "PROT <SP> <code>") ; error!
               ("PWD" ,PWD-COMMAND . "PWD")
               ("QUIT" ,QUIT-COMMAND . "QUIT")
               ("REIN" ,REIN-COMMAND . "REIN")
@@ -1823,10 +1813,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                passive-2-ports-from  ;free-passive-2-port
                                                server-1-host
                                                server-2-host
-                                               server-1-encryption
-                                               server-2-encryption
-                                               server-1-certificate
-                                               server-2-certificate
                                                default-root-dir
                                                default-locale-encoding
                                                log-output-port
@@ -1834,31 +1820,51 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (init-ftp-dirs default-root-dir)
         (parameterize ([current-custodian server-custodian])
           (when server-1-host
-            (let ([listener (if server-1-encryption
-                                (ssl-listen server-1-port (random 123456789) #t server-1-host server-1-encryption)
-                                (tcp-listen server-1-port max-allow-wait #t server-1-host))])
-              (when server-1-encryption
-                (ssl-load-certificate-chain! listener server-1-certificate default-locale-encoding)
-                (ssl-load-private-key! listener server-1-certificate #t #f default-locale-encoding))
+            (let* ([ssl-server-ctx (if (and server-1-encryption server-1-certificate)
+                                       (let ([ctx (ssl-make-server-context server-1-encryption)])
+                                         (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
+                                         (ssl-load-private-key! ctx server-1-certificate #t #f default-locale-encoding)
+                                         ctx)
+                                       #f)]
+                   [ssl-client-ctx (if (and server-1-encryption server-1-certificate)
+                                       (let ([ctx (ssl-make-client-context server-1-encryption)])
+                                         (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
+                                         (ssl-load-private-key! ctx server-1-certificate #t #f default-locale-encoding)
+                                         ctx)
+                                       #f)]
+                   [listener (if ssl-server-ctx
+                                 (ssl-listen server-1-port (random 123456789) #t server-1-host ssl-server-ctx)
+                                 (tcp-listen server-1-port max-allow-wait #t server-1-host))])
               (letrec ([main-loop (λ ()
                                     (send (new ftp-session% 
                                                [server-params server-params]
-                                               [encryption server-1-encryption]
+                                               [ssl-server-context ssl-server-ctx]
+                                               [ssl-client-context ssl-client-ctx]
                                                [welcome-message welcome-message])
                                           handle-client-request listener transfer-wait-time)
                                     (main-loop))])
                 (set! server-1-thread (thread main-loop)))))
           (when server-2-host
-            (let ([listener (if server-2-encryption
-                                (ssl-listen server-2-port (random 123456789) #t server-2-host server-2-encryption)
-                                (tcp-listen server-2-port max-allow-wait #t server-2-host))])
-              (when server-2-encryption
-                (ssl-load-certificate-chain! listener server-2-certificate default-locale-encoding)
-                (ssl-load-private-key! listener server-2-certificate #t #f default-locale-encoding))
+            (let* ([ssl-server-ctx (if (and server-2-encryption server-2-certificate)
+                                       (let ([ctx (ssl-make-server-context server-2-encryption)])
+                                         (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
+                                         (ssl-load-private-key! ctx server-2-certificate #t #f default-locale-encoding)
+                                         ctx)
+                                       #f)]
+                   [ssl-client-ctx (if (and server-2-encryption server-2-certificate)
+                                       (let ([ctx (ssl-make-client-context server-2-encryption)])
+                                         (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
+                                         (ssl-load-private-key! ctx server-2-certificate #t #f default-locale-encoding)
+                                         ctx)
+                                       #f)]
+                   [listener (if ssl-server-ctx
+                                 (ssl-listen server-2-port (random 123456789) #t server-2-host ssl-server-ctx)
+                                 (tcp-listen server-2-port max-allow-wait #t server-2-host))])
               (letrec ([main-loop (λ ()
                                     (send (new ftp-session% 
                                                [server-params server-params]
-                                               [encryption server-2-encryption]
+                                               [ssl-server-context ssl-server-ctx]
+                                               [ssl-client-context ssl-client-ctx]
                                                [welcome-message welcome-message])
                                           handle-client-request listener transfer-wait-time)
                                     (main-loop))])
