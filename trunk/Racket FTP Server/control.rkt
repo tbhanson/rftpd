@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Control Interface v1.0.5
+Racket FTP Server Control Interface v1.0.6
 ----------------------------------------------------------------------
 
 Summary:
@@ -34,14 +34,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define-syntax (any/exc stx) #'void)
 
-(define name&version "Racket FTP Server Control Interface v1.0.5")
+(define name&version "Racket FTP Server Control Interface v1.0.6")
 (define copyright    "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>")
 (define help-msg     "Type 'help' or '?' for help.")
 
-(define config-file      (make-parameter "conf/ftp.config"))
-(define control-host     (make-parameter "127.0.0.1"))
-(define control-port     (make-parameter 40600))
-(define control-passwd   (make-parameter "12345"))
+(define config-file        (make-parameter "conf/ftp.config"))
+(define control-host       (make-parameter "127.0.0.1"))
+(define control-port       (make-parameter 40600))
+(define control-passwd     (make-parameter "12345"))
+(define control-protocol   (make-parameter 'sslv3))
 
 (define interactive-mode (make-parameter #t))
 
@@ -69,13 +70,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (for-each (λ (param)
                         (case (car param)
                           ((control-server)
-                           (with-handlers ([any/exc void])
-                             (control-host (second param))
-                             (control-port (third param))))
-                          ((control-passwd)
-                           (control-passwd (second param)))))
+                           (for-each (λ (param)
+                                         (with-handlers ([any/exc void])
+                                           (case (car param)
+                                             ((host&port)
+                                              (control-host (second param))
+                                              (control-port (third param)))
+                                             ((ssl-protocol&certificate)
+                                              (control-protocol (second param)))
+                                             ((passwd)
+                                              (control-passwd (second param))))))
+                                       (cdr param)))))
                       (cdr conf)))))
-      (let-values ([(in out) (ssl-connect (control-host) (control-port) 'sslv3)])
+      (let-values ([(in out) (ssl-connect (control-host) (control-port) (control-protocol))])
         (displayln (control-passwd) out)(flush-output out)
         (when (string=? (read-line in) "Ok")
           (let ([request (λ (cmd)
