@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.1.0
+Racket FTP Server Library v1.1.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -64,7 +64,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    
    log-output-port
    
-   ftp-users)
+   ftp-users
+   
+   bad-auth)
   #:mutable)
 
 (date-display-format 'iso-8601)
@@ -401,16 +403,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (print-log-event "User logged in.")
                      (print-crlf/encoding** 'ANONYMOUS-LOGGED)
                      #t)
+                    ((and (hash-ref bad-auth-table *user-id* #f)
+                          ((mcar (hash-ref bad-auth-table *user-id*)). >= . 5)
+                          (if (> (- (current-seconds) (mcdr (hash-ref bad-auth-table *user-id*)))
+                                 60)
+                              #f #t))
+                     (let ([pair (hash-ref bad-auth-table *user-id*)])
+                       (set-mcar! pair (add1 (mcar pair)))
+                       (set-mcdr! pair (current-seconds)))
+                     (print-log-event "Login incorrect.")
+                     (print-crlf/encoding** 'LOGIN-INCORRECT)
+                     #f)
                     ((not pass)
                      (print-log-event "Login incorrect.")
                      (print-crlf/encoding** 'LOGIN-INCORRECT)
                      #f)
                     ((string=? (ftp-user-pass (hash-ref ftp-users *user-id*))
                                pass)
+                     (when (hash-ref bad-auth-table *user-id* #f)
+                       (hash-remove! bad-auth-table *user-id*))
                      (print-log-event "User logged in.")
                      (print-crlf/encoding** 'USER-LOGGED *user-id*)
                      #t)
                     (else
+                     (if (hash-ref bad-auth-table *user-id* #f)
+                         (let ([pair (hash-ref bad-auth-table *user-id*)])
+                           (set-mcar! pair (add1 (mcar pair)))
+                           (set-mcdr! pair (current-seconds)))
+                         (hash-set! bad-auth-table *user-id* (mcons 1 (current-seconds))))
                      (print-log-event "Password incorrect.")
                      (print-crlf/encoding** 'LOGIN-INCORRECT)
                      #f))))
@@ -480,8 +500,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                       (if (eq? l *current-lang*) "*" ""))) 
                                                      *lang-list*)
                                                 ";")))
-            ;(print-crlf/encoding* " EPRT")
-            ;(print-crlf/encoding* " EPSV")
+            (print-crlf/encoding* " EPRT")
+            (print-crlf/encoding* " EPSV")
             (print-crlf/encoding* " UTF8")
             (print-crlf/encoding* " REST STREAM")
             (print-crlf/encoding* " MLST size*;modify*;perm")
@@ -1412,6 +1432,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   ;(displayln "Process complete!" log-output-port)
                   (custodian-shutdown-all *current-process*)))))
     
+    (define-syntax (bad-auth-table stx)
+      #'(ftp-server-params-bad-auth server-params))
+    
     (define-syntax (server-1-host stx)
       #'(ftp-server-params-server-1-host server-params))
     
@@ -1748,23 +1771,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     (init-field [welcome-message         "Racket FTP Server!"]
                 
-                [server-1-host         "127.0.0.1"]
-                [server-1-port         21]
-                [server-1-encryption   #f]
-                [server-1-certificate  "certs/server-1.pem"]
+                [server-1-host           "127.0.0.1"]
+                [server-1-port           21]
+                [server-1-encryption     #f]
+                [server-1-certificate    "certs/server-1.pem"]
                 
-                [server-2-host         "::1"]
-                [server-2-port         21]
-                [server-2-encryption   #f]
-                [server-2-certificate  "certs/server-2.pem"]
+                [server-2-host           "::1"]
+                [server-2-port           21]
+                [server-2-encryption     #f]
+                [server-2-certificate    "certs/server-2.pem"]
                 
                 [max-allow-wait          50]
                 [transfer-wait-time      120]
                 
-                [passive-1-ports-from  40000]
-                [passive-1-ports-to    40599]
-                [passive-2-ports-from  40000]
-                [passive-2-ports-to    40599]
+                [passive-1-ports-from    40000]
+                [passive-1-ports-to      40599]
+                [passive-2-ports-from    40000]
+                [passive-2-ports-to      40599]
                 
                 [default-root-dir        "ftp-dir"]
                 [default-locale-encoding "UTF-8"]
@@ -1816,7 +1839,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                default-root-dir
                                                default-locale-encoding
                                                log-output-port
-                                               server-ftp-users))      ;ftp-users
+                                               server-ftp-users      ;ftp-users
+                                               (make-hash)))         ;bad-auth
         (init-ftp-dirs default-root-dir)
         (parameterize ([current-custodian server-custodian])
           (when server-1-host
