@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.0.12
+Racket FTP Server v1.1.0
 ----------------------------------------------------------------------
 
 Summary:
@@ -33,35 +33,37 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [name&version "Racket FTP Server v1.0.12"]
-                [copyright "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
+    (init-field [name&version            "Racket FTP Server v1.1.0"]
+                [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 
-                [server-1-host        "127.0.0.1"]
-                [server-1-port        21]
-                [server-1-encryption  #f]
-                [server-1-certificate "certs/server-1.pem"]
+                [server-1-host           "127.0.0.1"]
+                [server-1-port           21]
+                [server-1-encryption     #f]
+                [server-1-certificate    "certs/server-1.pem"]
                 
-                [server-2-host        "::1"]
-                [server-2-port        21]
-                [server-2-encryption  #f]
-                [server-2-certificate "certs/server-2.pem"]
+                [server-2-host           "::1"]
+                [server-2-port           21]
+                [server-2-encryption     #f]
+                [server-2-certificate    "certs/server-2.pem"]
                 
-                [server-max-allow-wait 50]
+                [server-max-allow-wait   50]
                 
-                [passive-1-ports '(40000 . 40599)]
-                [passive-2-ports '(40000 . 40599)]
+                [passive-1-ports         '(40000 . 40599)]
+                [passive-2-ports         '(40000 . 40599)]
                 
-                [control-passwd "12345"]
-                [control-host "127.0.0.1"]
-                [control-port 40600]
+                [control-passwd          "12345"]
+                [control-host            "127.0.0.1"]
+                [control-port            40600]
+                [control-encryption      'sslv3]
+                [control-certificate     "certs/control.pem"]
                 
                 [default-locale-encoding "UTF-8"]
                 [default-root-dir        "ftp-dir"]
                 
-                [log-file "logs/ftp.log"]
-                [control-cert-file "certs/control.pem"]
-                [config-file "conf/ftp.config"]
-                [users-file "conf/ftp.users"])
+                [log-file                "logs/ftp.log"]
+                
+                [config-file             "conf/ftp.config"]
+                [users-file              "conf/ftp.users"])
     
     (define log-out #f)
     (define server #f)
@@ -104,9 +106,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define/private (server-control)
       (let ([cust (make-custodian)])
         (parameterize ([current-custodian cust])
-          (let ([listener (ssl-listen control-port (random 123456789) #t control-host 'sslv3)])
-            (ssl-load-certificate-chain! listener control-cert-file default-locale-encoding)
-            (ssl-load-private-key! listener control-cert-file #t #f default-locale-encoding)
+          (let ([listener (ssl-listen control-port (random 123456789) #t control-host control-encryption)])
+            (ssl-load-certificate-chain! listener control-certificate default-locale-encoding)
+            (ssl-load-private-key! listener control-certificate #t #f default-locale-encoding)
             (letrec ([main-loop (λ ()
                                   (handle-client-request listener)
                                   (main-loop))])
@@ -173,40 +175,53 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (for-each (λ (param)
                           (case (car param)
                             ((server-1)
-                             (with-handlers ([any/c void])
-                               (set! server-1-host (second param))
-                               (set! server-1-port (third param))
-                               (set! server-1-encryption (fourth param))))
-                            ((server-1-certificate)
-                             (set! server-1-certificate (second param)))
+                             (for-each (λ (param)
+                                         (with-handlers ([any/c void])
+                                           (case (car param)
+                                             ((host&port)
+                                              (set! server-1-host (second param))
+                                              (set! server-1-port (third param)))
+                                             ((ssl-protocol&certificate)
+                                              (set! server-1-encryption (second param))
+                                              (set! server-1-certificate (third param)))
+                                             ((passive-ports)
+                                              (set! passive-1-ports (cons (second param) (third param)))))))
+                                       (cdr param)))
                             ((server-2)
-                             (with-handlers ([any/c void])
-                               (set! server-2-host (second param))
-                               (set! server-2-port (third param))
-                               (set! server-2-encryption (fourth param))))
-                            ((server-2-certificate)
-                             (set! server-2-certificate (second param)))
+                             (for-each (λ (param)
+                                         (with-handlers ([any/c void])
+                                           (case (car param)
+                                             ((host&port)
+                                              (set! server-2-host (second param))
+                                              (set! server-2-port (third param)))
+                                             ((ssl-protocol&certificate)
+                                              (set! server-2-encryption (second param))
+                                              (set! server-2-certificate (third param)))
+                                             ((passive-ports)
+                                              (set! passive-2-ports (cons (second param) (third param)))))))
+                                       (cdr param)))
+                            ((control-server)
+                             (for-each (λ (param)
+                                         (with-handlers ([any/c void])
+                                           (case (car param)
+                                             ((host&port)
+                                              (set! control-host (second param))
+                                              (set! control-port (third param)))
+                                             ((ssl-protocol&certificate)
+                                              (set! control-encryption (second param))
+                                              (set! control-certificate (third param)))
+                                             ((passwd)
+                                              (set! control-passwd (second param))))))
+                                       (cdr param)))
                             ((max-allow-wait)
                              (set! server-max-allow-wait (second param)))
-                            ((passive-1-ports)
-                             (set! passive-1-ports (cons (second param) (third param))))
-                            ((passive-2-ports)
-                             (set! passive-2-ports (cons (second param) (third param))))
                             ((default-locale-encoding)
                              (set! default-locale-encoding (second param)))
                             ((default-root-dir)
                              (set! default-root-dir (second param)))
                             ((log-file)
                              (when log-out (close-output-port log-out))
-                             (set! log-out (open-output-file (second param) #:exists 'append)))
-                            ((control-server)
-                             (with-handlers ([any/c void])
-                               (set! control-host (second param))
-                               (set! control-port (third param))))
-                            ((control-passwd)
-                             (set! control-passwd (second param)))
-                            ((control-certificate)
-                             (set! control-cert-file (second param)))))
+                             (set! log-out (open-output-file (second param) #:exists 'append)))))
                         (cdr conf)))))))
     
     (define/private (load-users)
