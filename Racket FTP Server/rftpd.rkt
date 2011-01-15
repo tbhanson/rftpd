@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.1.1
+Racket FTP Server v1.1.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -26,19 +26,35 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #lang racket
 
-(require (file "lib-ssl.rkt")
+(require ffi/unsafe
+         (file "lib-ssl.rkt")
          (prefix-in ftp: (file "lib-rftpd.rkt")))
+
+(define-values (ShowConsole HideConsole)
+  (case (system-type) 
+    [(windows)
+     (define _HWND (_or-null _pointer))
+     (define SW_HIDE 0)
+     (define SW_SHOW 5)
+     
+     (define-c GetConsoleWindow "Kernel32.dll" (_fun -> _HWND))
+     (define-c ShowWindow "User32.dll" (_fun _HWND _int -> _bool))
+     
+     (values (λ() (ShowWindow (GetConsoleWindow) SW_SHOW))
+             (λ() (ShowWindow (GetConsoleWindow) SW_HIDE)))]
+    [else
+     (values void void)]))
 
 (define racket-ftp-server%
   (class object%
     (super-new)
     
-    (init-field [server-name&version     "Racket FTP Server v1.1.1"]
+    (init-field [server-name&version     "Racket FTP Server v1.1.2"]
                 [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 [ci-help-msg             "Type 'help' or '?' for help."]
                 
                 [read-cmd-line?          #f]
-                [ci-interactive?         #t]
+                [ci-interactive?         #f]
                 [show-banner?            #f]
                 [echo?                   #f]
                 
@@ -85,15 +101,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (when read-cmd-line?
           (command-line
            #:program "rftpd"
+           #:once-each
+           [("-i" "--interactive") "Start a RFTPD Remote Control Interface in interactive mode"  
+                                   (set! ci-interactive? #t)]
+           [("-v" "--version")     "Shows version and copyright" 
+                                   (set! show-banner? #t)]
+           [("-e" "--echo")        "Show echo"
+                                   (set! echo? #t)]
            #:once-any
            [("-r" "--start")       "Start server"      (set! start? #t)]
            [("-s" "--stop")        "Stop server"       (set! stop? #t)]
            [("-t" "--restart")     "Restart server"    (set! restart? #t)]
-           [("-i" "--interactive") "Start a RFTPD Remote Control Interface in interactive mode"  
-                                   (set! ci-interactive? #t)]
-           [("-v" "--version")     "Shows version and copyright" (set! show-banner? #t)]
-           [("-h" "--echo")        "Show echo"         (set! echo? #t)]
-           [("-e" "--exit")        "Shutdown server"   (set! shutdown? #t)]))
+           [("-x" "--exit")        "Shutdown server"   (set! shutdown? #t)]))
+        (when (or show-banner? echo? ci-interactive?) (ShowConsole))
+        (when show-banner?
+          (display-lines (list server-name&version copyright "")))
         (parameterize ([current-custodian cust])
           (with-handlers ([exn:fail:network? 
                            (λ(e)
@@ -306,8 +328,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (cdr conf)))))))
     
     (define/private (init)
-      (when show-banner?
-        (display-lines '(server-name&version copyright "")))
+      (HideConsole)
       (load-config)
       (unless log-out
         (set! log-out (open-output-file log-file #:exists 'append))))
@@ -317,5 +338,5 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ;-----------------------------------
 ;              BEGIN
 ;-----------------------------------
-(send (new racket-ftp-server%) main)
+(send (new racket-ftp-server% [read-cmd-line? #t]) main)
 
