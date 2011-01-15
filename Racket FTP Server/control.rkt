@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Control Interface v1.0.6
+Racket FTP Server Control Interface v1.0.7
 ----------------------------------------------------------------------
 
 Summary:
@@ -34,7 +34,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define-syntax (any/exc stx) #'void)
 
-(define name&version "Racket FTP Server Control Interface v1.0.6")
+(define name&version "Racket FTP Server Control Interface v1.0.7")
 (define copyright    "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>")
 (define help-msg     "Type 'help' or '?' for help.")
 
@@ -47,7 +47,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define interactive-mode (make-parameter #t))
 
 (define shutdown? (make-parameter #f))
-(define run?      (make-parameter #f))
+(define start?    (make-parameter #f))
 (define stop?     (make-parameter #f))
 (define restart?  (make-parameter #f))
 
@@ -56,7 +56,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (command-line
  #:program "control"
  #:once-any
- [("-r" "--run")     "Run server"      (run? #t)]
+ [("-r" "--start")   "Start server"    (start? #t)]
  [("-s" "--stop")    "Stop server"     (stop? #t)]
  [("-t" "--restart") "Restart server"  (restart? #t)]
  [("-e" "--exit")    "Shutdown server" (shutdown? #t)])
@@ -90,8 +90,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            (flush-output out)
                            (displayln (read-line in)))])
             (cond
-              ((run?)
-               (request "%run")
+              ((start?)
+               (request "%start")
                (request "%bye"))
               ((stop?)
                (request "%stop")
@@ -110,7 +110,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    (let ([cmd (read)])
                      (case cmd
                        ((help ?)
-                        (display-lines '("%run     - run server."
+                        (display-lines '("%start   - start server."
                                          "%stop    - stop server."
                                          "%restart - restart server."
                                          "%exit    - shutdown server."
