@@ -558,8 +558,8 @@
                     ;; Flush in progress; try again later:
                     0]
                    [(mzssl-must-write mzssl)
-                    => (λ (sema)
-                         (wrap-evt (semaphore-peek-evt sema) (λ (x) 0)))]
+                    (λ (sema)
+                      (wrap-evt (semaphore-peek-evt sema) (λ (x) 0)))]
                    [(mzssl-r-closed? mzssl)
                     0]
                    [else
@@ -719,8 +719,8 @@
                     #f]
                    [(mzssl-must-read mzssl)
                     ;; Read pending, so wait until it's done:
-                    => (λ (sema)
-                         (wrap-evt (semaphore-peek-evt sema) (λ (x) #f)))]
+                    (λ (sema)
+                      (wrap-evt (semaphore-peek-evt sema) (λ (x) #f)))]
                    [else
                     ;; Normal write (since no flush is active or read pending):
                     (let ([sema (mzssl-must-write mzssl)])

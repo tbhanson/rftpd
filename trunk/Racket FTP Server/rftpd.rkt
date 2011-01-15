@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.1.0
+Racket FTP Server v1.1.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -33,15 +33,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [name&version            "Racket FTP Server v1.1.0"]
+    (init-field [server-name&version     "Racket FTP Server v1.1.1"]
                 [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
+                [ci-help-msg             "Type 'help' or '?' for help."]
+                
+                [read-cmd-line?          #f]
+                [ci-interactive?         #t]
+                [show-banner?            #f]
+                [echo?                   #f]
                 
                 [server-1-host           "127.0.0.1"]
                 [server-1-port           21]
                 [server-1-encryption     #f]
                 [server-1-certificate    "certs/server-1.pem"]
                 
-                [server-2-host           "::1"]
+                [server-2-host           #f]
                 [server-2-port           21]
                 [server-2-encryption     #f]
                 [server-2-certificate    "certs/server-2.pem"]
@@ -70,12 +76,81 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (start)
-      (load-config)
-      (unless log-out
-        (set! log-out (open-output-file log-file #:exists 'append)))
+    (define/public (main)
+      (let ([shutdown? #f]
+            [start? #f]
+            [stop?  #f]
+            [restart? #f]
+            [cust (make-custodian)])
+        (when read-cmd-line?
+          (command-line
+           #:program "rftpd"
+           #:once-any
+           [("-r" "--start")       "Start server"      (set! start? #t)]
+           [("-s" "--stop")        "Stop server"       (set! stop? #t)]
+           [("-t" "--restart")     "Restart server"    (set! restart? #t)]
+           [("-i" "--interactive") "Start a RFTPD Remote Control Interface in interactive mode"  
+                                   (set! ci-interactive? #t)]
+           [("-v" "--version")     "Shows version and copyright" (set! show-banner? #t)]
+           [("-h" "--echo")        "Show echo"         (set! echo? #t)]
+           [("-e" "--exit")        "Shutdown server"   (set! shutdown? #t)]))
+        (parameterize ([current-custodian cust])
+          (with-handlers ([exn:fail:network? 
+                           (λ(e)
+                             (when (or start? 
+                                       restart?
+                                       (equal? (current-command-line-arguments) #()))
+                               (start-server)))]
+                          [any/c void])
+            (let*-values ([(ssl-ctx) (let ([ctx (ssl-make-client-context control-encryption)])
+                                       (ssl-load-certificate-chain! ctx control-certificate default-locale-encoding)
+                                       (ssl-load-private-key! ctx control-certificate #t #f default-locale-encoding)
+                                       ctx)]
+                          [(in out) (ssl-connect control-host control-port ssl-ctx)])
+              (displayln control-passwd out)(flush-output out)
+              (when (string=? (read-line in) "Ok")
+                (let ([request (λ (cmd)
+                                 (displayln cmd out)
+                                 (flush-output out)
+                                 (displayln (read-line in)))])
+                  (cond
+                    (start?
+                     (request "%start")
+                     (request "%bye"))
+                    (stop?
+                     (request "%stop")
+                     (request "%bye"))
+                    (restart?
+                     (request "%restart")
+                     (request "%bye"))
+                    (shutdown?
+                     (request "%exit")
+                     (request "%bye"))
+                    (else
+                     (when ci-interactive?
+                       (displayln ci-help-msg) (newline)
+                       (let loop ()
+                         (display "#> ")
+                         (let ([cmd (read)])
+                           (case cmd
+                             ((help ?)
+                              (display-lines '("%start   - start server."
+                                               "%stop    - stop server."
+                                               "%restart - restart server."
+                                               "%exit    - shutdown server."
+                                               "%bye     - close session."))
+                              (loop))
+                             (else
+                              (request cmd)
+                              (unless (memq cmd '(%exit %bye))
+                                (loop)))))))))))))
+          (custodian-shutdown-all cust))))
+    ;;
+    ;; ---------- Private Methods ----------
+    ;;
+    (define/private (start-server)
       (set! server (new ftp:ftp-server% 
-                        [welcome-message name&version]
+                        [welcome-message server-name&version]
                         [server-1-host server-1-host]
                         [server-1-port server-1-port]
                         [server-1-encryption server-1-encryption]
@@ -93,16 +168,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         [default-locale-encoding default-locale-encoding]
                         [log-output-port log-out]))
       (load-users)
-      (displayln name&version)
-      (displayln copyright) (newline)
-      (run)
+      (start!)
       (server-control)
       (let loop ()
         (sleep 60)
         (loop)))
-    ;;
-    ;; ---------- Private Methods ----------
-    ;;
+    
     (define/private (server-control)
       (let ([cust (make-custodian)])
         (parameterize ([current-custodian cust])
@@ -136,36 +207,36 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 ((eq? cmd '%bye)
                  (response "Ok"))
                 ((eq? cmd '%exit)
-                 (stop)
+                 (stop!)
                  (close-output-port log-out)
                  (response "Ok")
                  (exit))
-                ((eq? cmd '%run)
-                 (run)
+                ((eq? cmd '%start)
+                 (start!)
                  (response "Ok")
                  (next (read input-port)))
                 ((eq? cmd '%stop)
                  (flush-output log-out)
-                 (stop)
+                 (stop!)
                  (response "Ok")
                  (next (read input-port)))
                 ((eq? cmd '%restart)
                  (flush-output log-out)
-                 (stop)
-                 (run)
+                 (stop!)
+                 (start!)
                  (response "Ok")
                  (next (read input-port)))
                 (else
                  (response "Command '~a' not implemented.\n" cmd)
                  (next (read input-port)))))))))
     
-    (define/private (run)
-      (send server run)
-      (displayln (format "Server ~a!" (send server status))))
+    (define/private (start!)
+      (send server start)
+      (when echo? (displayln (format "Server ~a!" (send server status)))))
     
-    (define/private (stop)
+    (define/private (stop!)
       (send server stop)
-      (displayln (format "Server ~a!" (send server status))))
+      (when echo? (displayln (format "Server ~a!" (send server status)))))
     
     (define/private (load-config)
       (call-with-input-file config-file
@@ -232,9 +303,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (for-each (λ (user)
                           (send server add-ftp-user
                                 (car user) (second user) (third user) (fourth user) (fifth user) (sixth user)))
-                        (cdr conf)))))))))
+                        (cdr conf)))))))
+    
+    (define/private (init)
+      (when show-banner?
+        (display-lines '(server-name&version copyright "")))
+      (load-config)
+      (unless log-out
+        (set! log-out (open-output-file log-file #:exists 'append))))
+    
+    (init)))
+
 ;-----------------------------------
 ;              BEGIN
 ;-----------------------------------
-(send (new racket-ftp-server%) start)
+(send (new racket-ftp-server%) main)
 

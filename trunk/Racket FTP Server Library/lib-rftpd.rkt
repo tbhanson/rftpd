@@ -1776,7 +1776,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [server-1-encryption     #f]
                 [server-1-certificate    "certs/server-1.pem"]
                 
-                [server-2-host           "::1"]
+                [server-2-host           #f]
                 [server-2-port           21]
                 [server-2-encryption     #f]
                 [server-2-certificate    "certs/server-2.pem"]
@@ -1825,25 +1825,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define/public (clear-ftp-users)
       (set! server-ftp-users (make-hash)))
     
-    (define/public (run)
+    (define/public (start)
       (when (eq? state 'stopped)
         (set! server-custodian (make-custodian))
         (set! server-params (ftp-server-params passive-1-ports-from
                                                passive-1-ports-to
-                                               passive-1-ports-from  ;free-passive-1-port
+                                               passive-1-ports-from    ;free-passive-1-port
                                                passive-2-ports-from
                                                passive-2-ports-to 
-                                               passive-2-ports-from  ;free-passive-2-port
+                                               passive-2-ports-from    ;free-passive-2-port
                                                server-1-host
                                                server-2-host
                                                default-root-dir
                                                default-locale-encoding
                                                log-output-port
-                                               server-ftp-users      ;ftp-users
-                                               (make-hash)))         ;bad-auth
+                                               server-ftp-users        ;ftp-users
+                                               (make-hash)))           ;bad-auth
         (init-ftp-dirs default-root-dir)
         (parameterize ([current-custodian server-custodian])
-          (when server-1-host
+          (when (and server-1-host server-1-port)
             (let* ([ssl-server-ctx (if (and server-1-encryption server-1-certificate)
                                        (let ([ctx (ssl-make-server-context server-1-encryption)])
                                          (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
@@ -1868,7 +1868,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                           handle-client-request listener transfer-wait-time)
                                     (main-loop))])
                 (set! server-1-thread (thread main-loop)))))
-          (when server-2-host
+          (when (and server-2-host server-2-port)
             (let* ([ssl-server-ctx (if (and server-2-encryption server-2-certificate)
                                        (let ([ctx (ssl-make-server-context server-2-encryption)])
                                          (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
