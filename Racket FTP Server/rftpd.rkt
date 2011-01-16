@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.1.2
+Racket FTP Server v1.1.3
 ----------------------------------------------------------------------
 
 Summary:
@@ -49,7 +49,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version     "Racket FTP Server v1.1.2"]
+    (init-field [server-name&version     "Racket FTP Server v1.1.3"]
                 [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 [ci-help-msg             "Type 'help' or '?' for help."]
                 
@@ -98,32 +98,33 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             [stop?  #f]
             [restart? #f]
             [cust (make-custodian)])
-        (when read-cmd-line?
-          (command-line
-           #:program "rftpd"
-           #:once-each
-           [("-i" "--interactive") "Start a RFTPD Remote Control Interface in interactive mode"  
-                                   (set! ci-interactive? #t)]
-           [("-v" "--version")     "Shows version and copyright" 
-                                   (set! show-banner? #t)]
-           [("-e" "--echo")        "Show echo"
-                                   (set! echo? #t)]
-           #:once-any
-           [("-r" "--start")       "Start server"      (set! start? #t)]
-           [("-s" "--stop")        "Stop server"       (set! stop? #t)]
-           [("-t" "--restart")     "Restart server"    (set! restart? #t)]
-           [("-x" "--exit")        "Shutdown server"   (set! shutdown? #t)]))
-        (when (or show-banner? echo? ci-interactive?) (ShowConsole))
-        (when show-banner?
-          (display-lines (list server-name&version copyright "")))
-        (parameterize ([current-custodian cust])
-          (with-handlers ([exn:fail:network? 
-                           (λ(e)
-                             (when (or start? 
-                                       restart?
-                                       (equal? (current-command-line-arguments) #()))
-                               (start-server)))]
-                          [any/c void])
+        (with-handlers ([exn:fail:network? 
+                         (λ(e)
+                           (when (or start? restart?
+                                     (equal? (current-command-line-arguments) #()))
+                             (start-server)))]
+                        [any/c void])
+          (when read-cmd-line?
+            (command-line
+             #:program "rftpd"
+             #:once-any
+             [("-r" "--start")       "Start server"      (set! start? #t)]
+             [("-s" "--stop")        "Stop server"       (set! stop? #t)]
+             [("-t" "--restart")     "Restart server"    (set! restart? #t)]
+             [("-x" "--exit")        "Shutdown server"   (set! shutdown? #t)]
+             #:once-each
+             [("-i" "--interactive") "Start a RFTPD Remote Control Interface in interactive mode"  
+                                     (set! ci-interactive? #t)]
+             [("-v" "--version")     "Shows version and copyright" 
+                                     (set! show-banner? #t)]
+             [("-e" "--echo")        "Show echo"
+                                     (set! echo? #t)]))
+          (unless (or show-banner? echo? ci-interactive?) 
+            (HideConsole))
+          (when show-banner?
+            (display-lines (list server-name&version copyright "")))
+          (init)
+          (parameterize ([current-custodian cust])
             (let*-values ([(ssl-ctx) (let ([ctx (ssl-make-client-context control-encryption)])
                                        (ssl-load-certificate-chain! ctx control-certificate default-locale-encoding)
                                        (ssl-load-private-key! ctx control-certificate #t #f default-locale-encoding)
@@ -165,8 +166,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                              (else
                               (request cmd)
                               (unless (memq cmd '(%exit %bye))
-                                (loop)))))))))))))
-          (custodian-shutdown-all cust))))
+                                (loop))))))))))))
+            (custodian-shutdown-all cust)))))
     ;;
     ;; ---------- Private Methods ----------
     ;;
@@ -261,79 +262,78 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (when echo? (displayln (format "Server ~a!" (send server status)))))
     
     (define/private (load-config)
-      (call-with-input-file config-file
-        (λ (in)
-          (let ([conf (read in)])
-            (when (eq? (car conf) 'ftp-server-config)
-              (for-each (λ (param)
-                          (case (car param)
-                            ((server-1)
-                             (for-each (λ (param)
-                                         (with-handlers ([any/c void])
-                                           (case (car param)
-                                             ((host&port)
-                                              (set! server-1-host (second param))
-                                              (set! server-1-port (third param)))
-                                             ((ssl-protocol&certificate)
-                                              (set! server-1-encryption (second param))
-                                              (set! server-1-certificate (third param)))
-                                             ((passive-ports)
-                                              (set! passive-1-ports (cons (second param) (third param)))))))
-                                       (cdr param)))
-                            ((server-2)
-                             (for-each (λ (param)
-                                         (with-handlers ([any/c void])
-                                           (case (car param)
-                                             ((host&port)
-                                              (set! server-2-host (second param))
-                                              (set! server-2-port (third param)))
-                                             ((ssl-protocol&certificate)
-                                              (set! server-2-encryption (second param))
-                                              (set! server-2-certificate (third param)))
-                                             ((passive-ports)
-                                              (set! passive-2-ports (cons (second param) (third param)))))))
-                                       (cdr param)))
-                            ((control-server)
-                             (for-each (λ (param)
-                                         (with-handlers ([any/c void])
-                                           (case (car param)
-                                             ((host&port)
-                                              (set! control-host (second param))
-                                              (set! control-port (third param)))
-                                             ((ssl-protocol&certificate)
-                                              (set! control-encryption (second param))
-                                              (set! control-certificate (third param)))
-                                             ((passwd)
-                                              (set! control-passwd (second param))))))
-                                       (cdr param)))
-                            ((max-allow-wait)
-                             (set! server-max-allow-wait (second param)))
-                            ((default-locale-encoding)
-                             (set! default-locale-encoding (second param)))
-                            ((default-root-dir)
-                             (set! default-root-dir (second param)))
-                            ((log-file)
-                             (when log-out (close-output-port log-out))
-                             (set! log-out (open-output-file (second param) #:exists 'append)))))
-                        (cdr conf)))))))
+      (with-handlers ([any/c void])
+        (call-with-input-file config-file
+          (λ (in)
+            (let ([conf (read in)])
+              (when (eq? (car conf) 'ftp-server-config)
+                (for-each (λ (param)
+                            (case (car param)
+                              ((server-1)
+                               (for-each (λ (param)
+                                           (with-handlers ([any/c void])
+                                             (case (car param)
+                                               ((host&port)
+                                                (set! server-1-host (second param))
+                                                (set! server-1-port (third param)))
+                                               ((ssl-protocol&certificate)
+                                                (set! server-1-encryption (second param))
+                                                (set! server-1-certificate (third param)))
+                                               ((passive-ports)
+                                                (set! passive-1-ports (cons (second param) (third param)))))))
+                                         (cdr param)))
+                              ((server-2)
+                               (for-each (λ (param)
+                                           (with-handlers ([any/c void])
+                                             (case (car param)
+                                               ((host&port)
+                                                (set! server-2-host (second param))
+                                                (set! server-2-port (third param)))
+                                               ((ssl-protocol&certificate)
+                                                (set! server-2-encryption (second param))
+                                                (set! server-2-certificate (third param)))
+                                               ((passive-ports)
+                                                (set! passive-2-ports (cons (second param) (third param)))))))
+                                         (cdr param)))
+                              ((control-server)
+                               (for-each (λ (param)
+                                           (with-handlers ([any/c void])
+                                             (case (car param)
+                                               ((host&port)
+                                                (set! control-host (second param))
+                                                (set! control-port (third param)))
+                                               ((ssl-protocol&certificate)
+                                                (set! control-encryption (second param))
+                                                (set! control-certificate (third param)))
+                                               ((passwd)
+                                                (set! control-passwd (second param))))))
+                                         (cdr param)))
+                              ((max-allow-wait)
+                               (set! server-max-allow-wait (second param)))
+                              ((default-locale-encoding)
+                               (set! default-locale-encoding (second param)))
+                              ((default-root-dir)
+                               (set! default-root-dir (second param)))
+                              ((log-file)
+                               (when log-out (close-output-port log-out))
+                               (set! log-out (open-output-file (second param) #:exists 'append)))))
+                          (cdr conf))))))))
     
     (define/private (load-users)
-      (call-with-input-file users-file
-        (λ (in)
-          (let ([conf (read in)])
-            (when (eq? (car conf) 'ftp-server-users)
-              (for-each (λ (user)
-                          (send server add-ftp-user
-                                (car user) (second user) (third user) (fourth user) (fifth user) (sixth user)))
-                        (cdr conf)))))))
+      (with-handlers ([any/c void])
+        (call-with-input-file users-file
+          (λ (in)
+            (let ([conf (read in)])
+              (when (eq? (car conf) 'ftp-server-users)
+                (for-each (λ (user)
+                            (send server add-ftp-user
+                                  (car user) (second user) (third user) (fourth user) (fifth user) (sixth user)))
+                          (cdr conf))))))))
     
     (define/private (init)
-      (HideConsole)
       (load-config)
       (unless log-out
-        (set! log-out (open-output-file log-file #:exists 'append))))
-    
-    (init)))
+        (set! log-out (open-output-file log-file #:exists 'append))))))
 
 ;-----------------------------------
 ;              BEGIN
