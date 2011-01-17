@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.1.1
+Racket FTP Server Library v1.1.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -78,21 +78,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define ftp-date-zone-offset (srfi/19:date-zone-offset ftp-run-date))
 
 
-(define ftp-utils%
-  (class object%
-    
-    (define/public (get-params req)
-      (get-params* #rx"[^A-z]+.*" req))
-    
-    (define/public (get-params* delseq req)
-      (let ([p (regexp-match delseq req)])
-        (if p
-            (let ([p (regexp-match #rx"[^ \t]+.*" (car p))])
-              (if p
-                  (let ([p (regexp-match #rx".*[^ \t]+" (car p))])
-                    (if p (car p) #f))
-                  #f))
-            #f)))
+(define network%
+  (mixin () ()
+    (super-new)
     
     (define/public (IPv4? ip)
       (with-handlers ([any/c (λ (e) #f)])
@@ -116,7 +104,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 ((string->number s 16). <= . #xFFFF)))
                           l)
                   #f))
-            #f)))
+            #f)))))
+
+(define ftp-vfs%
+  (mixin () ()
+    (super-new)
     
     (define/public (ftp-file-or-dir-full-info sys-file)
       (call-with-input-file sys-file
@@ -215,7 +207,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (ftp-allow-write? (string-append spath ".ftp-racket-file") user))
     
     (define/public (ftp-file-allow-delete-move? spath user)
-      (ftp-allow-delete-move? (string-append spath ".ftp-racket-file") user))
+      (ftp-allow-delete-move? (string-append spath ".ftp-racket-file") user))))
+
+(define ftp-utils%
+  (mixin () ()
+    (super-new)
+    
+    (define/public (get-params req)
+      (get-params* #rx"[^A-z]+.*" req))
+    
+    (define/public (get-params* delseq req)
+      (let ([p (regexp-match delseq req)])
+        (if p
+            (let ([p (regexp-match #rx"[^ \t]+.*" (car p))])
+              (if p
+                  (let ([p (regexp-match #rx".*[^ \t]+" (car p))])
+                    (if p (car p) #f))
+                  #f))
+            #f)))
     
     ;(define/public (print-crlf/encoding encoding out text)
     ;  (print/encoding encoding out text)
@@ -246,12 +255,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (do () [(<= tick 0) (event)]
                     (sleep period)
                     (set! tick (sub1 tick)))))
-        reset))
-    
-    (super-new)))
+        reset))))
 
 (define ftp-session%
-  (class ftp-utils%
+  (class (ftp-utils% (network% (ftp-vfs% object%)))
     (inherit get-params
              alarm-clock
              IPv4?
@@ -1762,7 +1769,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (super-new)))
 
 (define ftp-server%
-  (class ftp-utils%
+  (class (ftp-utils% (ftp-vfs% object%))
     (inherit get-params*
              ftp-dir-exists?
              ftp-mkdir*)
