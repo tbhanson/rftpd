@@ -390,7 +390,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (sleep .005)
             (loop (read-request *client-input-port*))))))
     
-    ;; Возвращает идентификатор(имя) пользователя
     (define (USER-COMMAND params)
       (if params
           (let ([name params])
@@ -404,7 +403,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (set! *user-id* #f)))
       (set! *user-logged* #f))
     
-    ;; Проверяет пороль пользователя
     (define (PASS-COMMAND params)
       (let ([correct?
              (cond
@@ -542,7 +540,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (print-crlf/encoding* "200 PBSZ=0")
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    ;; Инициирует активный режим.
     (define (PORT-COMMAND params)
       (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR ""))])
         (unless (regexp-match #rx"^[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+$" params)
@@ -555,19 +552,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (set! *active-host&port* (ftp-host&port host port))
           (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "PORT"))))
     
-    ;; Experimental
     (define (REST-COMMAND params)
       (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR ""))])
         (set! *restart-marker* (string->number (car (regexp-match #rx"^[0-9]+$" params))))
         (print-crlf/encoding** 'RESTART)))
     
-    ;; Experimental
     (define (ALLO-COMMAND params)
       (if (params . and .(regexp-match #rx"^[0-9]+$" params))
           (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "ALLO")
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    ;; Experimental
     (define (STAT-COMMAND params)
       (if params
           (begin
@@ -582,7 +576,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             ; Print status of the operation in progress?
             (print-crlf/encoding** 'END 211))))
     
-    ;; Experimental
     (define (LANG-COMMAND params)
       (if params
           (let ([lang (string->symbol (string-upcase params))])
@@ -593,7 +586,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (print-crlf/encoding** 'MISSING-PARAMS)))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    ;; Посылает клиенту список файлов директории.
     (define (DIR-LIST params [short? #f][status #f])
       (local
         [(define (month->string m)
@@ -681,7 +673,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (unless status
                (print-crlf/encoding** 'DIR-NOT-FOUND)))))))
     
-    ;; Отправляет клиенту копию файла.
     (define (RETR-COMMAND params)
       (local [(define (fcopy full-path-file)
                 (ftp-data-transfer full-path-file #t))]
@@ -703,7 +694,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (else
            (print-crlf/encoding** 'DIR-NOT-FOUND)))))
     
-    ;; Устанавливает тип передачи файла (реализован только A(текстовый) и I(бинарный)).
     (define (TYPE-COMMAND params)
       (if params
           (case (string->symbol (string-upcase (car (regexp-split #rx" +" params))))
@@ -719,7 +709,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (print-crlf/encoding** 'UNSUPTYPE)))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    ;; Experimental
     (define (MODE-COMMAND params)
       (if params
           (case (string->symbol (string-upcase params))
@@ -731,7 +720,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (print-crlf/encoding** 'UNKNOWN-TYPE "MODE")))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    ;; Experimental
     (define (STRU-COMMAND params)
       (if params
           (case (string->symbol (string-upcase params))
@@ -743,7 +731,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (print-crlf/encoding** 'UNKNOWN-TYPE "FILE STRUCTURE")))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    ;; Изменяет рабочую директорию (current-dir).
     (define (CWD-COMMAND params)
       (cond
         ((not params)
@@ -758,7 +745,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (else
          (print-crlf/encoding** 'DIR-NOT-FOUND))))
     
-    ;; Создает каталог.
     (define (MKD-COMMAND params)
       (local [(define (mkd ftp-parent-path dir-name user)
                 (let* ([full-parent-path (string-append *root-dir* ftp-parent-path)]
@@ -800,7 +786,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (print-crlf/encoding** 'CANT-CREATE-DIR))))
             (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
-    ;; Удаляет каталог.
     (define (RMD-COMMAND params)
       (local
         [(define (rmd ftp-path)
@@ -828,7 +813,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (else
            (print-crlf/encoding** 'DIR-NOT-FOUND)))))
     
-    ;; Сохраняет файл.
     (define (STORE-FILE params [exists-mode 'truncate])
       (local [(define (stor full-parent-path file-name)
                 (let ([real-path (string-append full-parent-path "/" file-name)])
@@ -859,7 +843,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (print-crlf/encoding** 'CANT-STORE-FILE))))
             (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
-    ;; Experimental
     (define (STOU-FILE params)
       (cond
         (params
@@ -874,7 +857,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (else
          (print-crlf/encoding** 'STORE-FILE-PERM-DENIED))))
     
-    ;; Удаляет файл.
     (define (DELE-COMMAND params)
       (local
         [(define (dele ftp-path)
@@ -897,7 +879,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (else
            (print-crlf/encoding** 'FILE-NOT-FOUND)))))
     
-    ;; Эмулирует Unix команды.
     (define (SITE-COMMAND params)
       (local
         [(define (chmod permis path)
@@ -955,7 +936,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (else (print-crlf/encoding** 'MISSING-PARAMS))))
             (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
-    ;; Experimental
     (define (MDTM-COMMAND params)
       (if params
           (let ([mdtm (λ (path)
@@ -970,7 +950,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (mdtm (string-append *root-dir* *current-dir* "/" params))))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    ;; Experimental
     (define (SIZE-COMMAND params)
       (if params
           (let ([size (λ (path)
@@ -982,7 +961,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (size (string-append *root-dir* *current-dir* "/" params))))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    ;; Experimental
     (define (MLST-COMMAND params)
       (local [(define (mlst session ftp-path)
                 (print-crlf/encoding** 'MLST-LISTING)
@@ -1017,7 +995,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                (else
                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))))))
     
-    ;; Experimental
     (define (MLSD-COMMAND params)
       (local [(define (mlsd ftp-path)
                 (let* ([path (string-append *root-dir* ftp-path)]
@@ -1050,8 +1027,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (mlsd (string-append *current-dir* "/" params))
                  (print-crlf/encoding** 'DIR-NOT-FOUND)))))))
     
-    
-    ;; Experimental
     (define (OPTS-COMMAND params)
       (if params
           (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
@@ -1090,7 +1065,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (else (print-crlf/encoding** 'SYNTAX-ERROR ""))))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    ;; Подготавливает к переименованию файл или каталог.
     (define (RNFR-COMMAND params)
       (if params
           (let ([path1 (string-append *root-dir* params)]
@@ -1128,7 +1102,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    ;; Переименовывает подготавленный файл или каталог.
     (define (RNTO-COMMAND params)
       (local [(define (move file? old-path full-parent-path name user)
                 (let ([new-path (string-append full-parent-path "/" name)])
@@ -1185,7 +1158,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (print-crlf/encoding** 'RENAME-PERM-DENIED))
             (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
-    ;; Инициирует пассивный режим.
     (define (PASV-COMMAND params)
       (if params
           (print-crlf/encoding** 'SYNTAX-ERROR "")
@@ -1209,7 +1181,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2)))
               (print-crlf/encoding** 'BAD-PROTOCOL))))
     
-    ;; Experimental
     (define (EPRT-COMMAND params)
       (if params
           (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR "EPRT:"))])
@@ -1218,15 +1189,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (unless (and (string=? t1 t2 "")
                            (or (and (= prt 1) (IPv4? ip))
                                (and (= prt 2) (IPv6? ip)))
-                           (positive? port)
-                           (port . <= . #xffff))
+                           (port-number? port))
                 (raise 'syntax))
               (set! *DTP* 'active)
               (set! *active-host&port* (ftp-host&port ip port))
               (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "EPRT")))
           (print-crlf/encoding** 'SYNTAX-ERROR "EPRT:")))
     
-    ;; Experimental
     (define (EPSV-COMMAND params)
       (local [(define (set-psv)
                 (set! *DTP* 'passive)
@@ -1261,7 +1230,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [(ALL) (epsv)]))
             (epsv))))
     
-    ;; Experimental
     (define (HELP-COMMAND params)
       (if params
           (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'UNKNOWN-CMD params))])
@@ -1278,7 +1246,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         ((active)
          (active-data-transfer data file?))))
     
-    ;; Experimental
     (define (active-data-transfer data file?)
       (let ([host (ftp-host&port-host *active-host&port*)]
             [port (ftp-host&port-port *active-host&port*)])
@@ -1287,8 +1254,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (thread (λ ()
                     (parameterize ([current-custodian *current-process*])
                       (with-handlers ([any/c (λ (e)
-                                               (printf "~s:~a\n" host port)
-                                               (displayln e)
+                                               ;(printf "~s:~a\n" host port)
+                                               ;(displayln e)
                                                (print-crlf/encoding** 'TRANSFER-ABORTED))])
                         (let-values ([(in out) (net-connect host port)])
                           (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
@@ -1316,7 +1283,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       ;(displayln  "Process complete!" log-output-port)
                       (custodian-shutdown-all *current-process*)))))))
     
-    ;; Experimental
     (define (passive-data-transfer data file?)
       (set! *current-process* (make-custodian))  
       (parameterize ([current-custodian *current-process*])
@@ -1361,7 +1327,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         ((active)
          (active-store-file new-file-full-path exists-mode))))
     
-    ;; Experimental
     (define (active-store-file new-file-full-path exists-mode)
       (let ([host (ftp-host&port-host *active-host&port*)]
             [port (ftp-host&port-port *active-host&port*)])
@@ -1400,7 +1365,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     ;(displayln "Process complete!" log-output-port)
                     (custodian-shutdown-all *current-process*))))))
     
-    ;; Experimental
     (define (passive-store-file new-file-full-path exists-mode)
       (set! *current-process* (make-custodian))
       (parameterize ([current-custodian *current-process*])
