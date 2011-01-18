@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.1.3
+Racket FTP Server v1.1.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -49,7 +49,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version     "Racket FTP Server v1.1.3"]
+    (init-field [server-name&version     "Racket FTP Server v1.1.4"]
                 [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 [ci-help-msg             "Type 'help' or '?' for help."]
                 
@@ -70,8 +70,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 
                 [server-max-allow-wait   50]
                 
-                [passive-1-ports         '(40000 . 40599)]
-                [passive-2-ports         '(40000 . 40599)]
+                [passive-1-ports         (ftp:make-passive-ports 40000 40599)]
+                [passive-2-ports         (ftp:make-passive-ports 40000 40599)]
                 
                 [control-passwd          "12345"]
                 [control-host            "127.0.0.1"]
@@ -183,10 +183,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         [server-2-encryption server-2-encryption]
                         [server-2-certificate server-2-certificate]
                         [max-allow-wait server-max-allow-wait]
-                        [passive-1-ports-from (car passive-1-ports)]
-                        [passive-1-ports-to (cdr passive-1-ports)]
-                        [passive-2-ports-from (car passive-2-ports)]
-                        [passive-2-ports-to (cdr passive-2-ports)]
+                        [passive-1-ports passive-1-ports]
+                        [passive-2-ports passive-2-ports]
                         [default-root-dir default-root-dir]
                         [default-locale-encoding default-locale-encoding]
                         [log-output-port log-out]))
@@ -274,36 +272,47 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                            (with-handlers ([any/c void])
                                              (case (car param)
                                                ((host&port)
-                                                (set! server-1-host (second param))
-                                                (set! server-1-port (third param)))
+                                                (set! server-1-host 
+                                                      (and (ftp:host-string? (second param)) (second param)))
+                                                (set! server-1-port 
+                                                      (and (ftp:port-number? (third param)) (third param))))
                                                ((ssl-protocol&certificate)
-                                                (set! server-1-encryption (second param))
+                                                (set! server-1-encryption 
+                                                      (and (ftp:ssl-protocol? (second param)) (second param)))
                                                 (set! server-1-certificate (third param)))
                                                ((passive-ports)
-                                                (set! passive-1-ports (cons (second param) (third param)))))))
+                                                (set! passive-1-ports 
+                                                      (ftp:make-passive-ports (second param) (third param)))))))
                                          (cdr param)))
                               ((server-2)
                                (for-each (λ (param)
                                            (with-handlers ([any/c void])
                                              (case (car param)
                                                ((host&port)
-                                                (set! server-2-host (second param))
-                                                (set! server-2-port (third param)))
+                                                (set! server-2-host 
+                                                      (and (ftp:host-string? (second param)) (second param)))
+                                                (set! server-2-port 
+                                                      (and (ftp:port-number? (third param)) (third param))))
                                                ((ssl-protocol&certificate)
-                                                (set! server-2-encryption (second param))
+                                                (set! server-2-encryption 
+                                                      (and (ftp:ssl-protocol? (second param)) (second param)))
                                                 (set! server-2-certificate (third param)))
                                                ((passive-ports)
-                                                (set! passive-2-ports (cons (second param) (third param)))))))
+                                                (set! passive-2-ports 
+                                                      (ftp:make-passive-ports (second param) (third param)))))))
                                          (cdr param)))
                               ((control-server)
                                (for-each (λ (param)
                                            (with-handlers ([any/c void])
                                              (case (car param)
                                                ((host&port)
-                                                (set! control-host (second param))
-                                                (set! control-port (third param)))
+                                                (set! control-host 
+                                                      (and (ftp:host-string? (second param)) (second param)))
+                                                (set! control-port 
+                                                      (and (ftp:port-number? (third param)) (third param))))
                                                ((ssl-protocol&certificate)
-                                                (set! control-encryption (second param))
+                                                (set! control-encryption 
+                                                      (and (ftp:ssl-protocol? (second param)) (second param)))
                                                 (set! control-certificate (third param)))
                                                ((passwd)
                                                 (set! control-passwd (second param))))))
