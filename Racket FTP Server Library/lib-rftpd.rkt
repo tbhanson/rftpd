@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.1.2
+Racket FTP Server Library v1.1.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -31,20 +31,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (file "lib-ssl.rkt")
          srfi/48)
 
-(provide ftp-server%)
+(provide ftp-server% 
+         and/exc
+         IPv4?
+         IPv6?
+         host-string?
+         port-number?
+         ssl-protocol?
+         make-passive-ports)
 
 (struct ftp-user (full-name login pass group home-dirs root-dir))
 (struct ftp-host&port (host port))
+(struct passive-ports (from to [free #:mutable]))
 (struct ftp-mlst-features (size? modify? perm?) #:mutable)
 
 (struct ftp-server-params 
-  (passive-1-ports-from
-   passive-1-ports-to
-   free-passive-1-port
-   
-   passive-2-ports-from
-   passive-2-ports-to
-   free-passive-2-port
+  (passive-1-ports
+   passive-2-ports
    
    server-1-host
    server-2-host
@@ -66,8 +69,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    
    ftp-users
    
-   bad-auth)
-  #:mutable)
+   bad-auth))
 
 (date-display-format 'iso-8601)
 
@@ -77,34 +79,46 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define ftp-run-date (srfi/19:current-date))
 (define ftp-date-zone-offset (srfi/19:date-zone-offset ftp-run-date))
 
+(define-syntax (and/exc stx)
+  (syntax-case stx ()
+    [(_ expr ...)
+     #'(with-handlers ([any/c (λ (e) #f)])
+         (and expr ...))]))
 
-(define network%
-  (mixin () ()
-    (super-new)
-    
-    (define/public (IPv4? ip)
-      (with-handlers ([any/c (λ (e) #f)])
-        (let ([l (regexp-split #rx"\\." ip)])
-          (if ((length l) . = . 4)
-              (andmap (λ(s) (byte? (string->number s))) l)
-              #f))))
-    
-    (define/public (IPv6? ip)
-      (with-handlers ([any/c (λ (e) #f)])
-        (if (and (regexp-match #rx"^[0-9a-fA-F]+:|^::" ip)
-                 (regexp-match #rx":[0-9a-fA-F]+$|::$" ip)
-                 (not (regexp-match #rx":::" ip)))
-            (let ([l (regexp-split #rx":" ip)])
-              (if (or (and (regexp-match #rx"::" ip)
+(define (IPv4? ip)
+  (with-handlers ([any/c (λ (e) #f)])
+    (let ([l (regexp-split #rx"\\." ip)])
+      (and ((length l) . = . 4)
+           (andmap (λ(s) (byte? (string->number s))) l)))))
+
+(define (IPv6? ip)
+  (and/exc (regexp-match #rx"^[0-9a-fA-F]+:|^::" ip)
+           (regexp-match #rx":[0-9a-fA-F]+$|::$" ip)
+           (not (regexp-match #rx":::" ip))
+           (let ([l (regexp-split #rx":" ip)])
+             (and (or (and (regexp-match #rx"::" ip)
                            ((length l) . <= . 8))
                       ((length l) . = . 8))
                   (andmap (λ(s) 
                             (if (string=? s "") 
                                 #t 
                                 ((string->number s 16). <= . #xFFFF)))
-                          l)
-                  #f))
-            #f)))))
+                          l)))))
+
+(define (host-string? host)
+  (and (string? host)
+       (or (IPv4? host) (IPv6? host) (string-ci=? host))))
+
+(define (port-number? port)
+  (and (exact-nonnegative-integer? port) (port . <= . #xffff)))
+
+(define (ssl-protocol? prt)
+  (memq prt '(sslv2-or-v3 sslv2 sslv3 tls)))
+
+(define (make-passive-ports from to)
+  (and (port-number? from) (port-number? to) (from . < . to)
+       (passive-ports from to from)))
+
 
 (define ftp-vfs%
   (mixin () ()
@@ -218,13 +232,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/public (get-params* delseq req)
       (let ([p (regexp-match delseq req)])
-        (if p
-            (let ([p (regexp-match #rx"[^ \t]+.*" (car p))])
-              (if p
-                  (let ([p (regexp-match #rx".*[^ \t]+" (car p))])
-                    (if p (car p) #f))
-                  #f))
-            #f)))
+        (and p
+             (let ([p (regexp-match #rx"[^ \t]+.*" (car p))])
+               (and p
+                    (let ([p (regexp-match #rx".*[^ \t]+" (car p))])
+                      (and p (car p))))))))
     
     ;(define/public (print-crlf/encoding encoding out text)
     ;  (print/encoding encoding out text)
@@ -258,11 +270,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         reset))))
 
 (define ftp-session%
-  (class (ftp-utils% (network% (ftp-vfs% object%)))
+  (class (ftp-utils% (ftp-vfs% object%))
     (inherit get-params
              alarm-clock
-             IPv4?
-             IPv6?
              print/encoding
              list-string->bytes/encoding
              request-bytes->string/encoding
@@ -412,9 +422,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      #t)
                     ((and (hash-ref bad-auth-table *user-id* #f)
                           ((mcar (hash-ref bad-auth-table *user-id*)). >= . 5)
-                          (if (> (- (current-seconds) (mcdr (hash-ref bad-auth-table *user-id*)))
-                                 60)
-                              #f #t))
+                          (<= (- (current-seconds) (mcdr (hash-ref bad-auth-table *user-id*)))
+                              60))
                      (let ([pair (hash-ref bad-auth-table *user-id*)])
                        (set-mcar! pair (add1 (mcar pair)))
                        (set-mcdr! pair (current-seconds)))
@@ -656,7 +665,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         
         (let ([dir (if (and params (eq? (string-ref params 0) #\-))
                        (let ([d (regexp-match #px"[^-\\w][^ \t-]+.*" params)])
-                         (if d (substring (car d) 1) #f))
+                         (and d (substring (car d) 1)))
                        params)])
           (cond
             ((not dir)
@@ -768,12 +777,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (let* ([path (if (memq (string-ref params (sub1 (string-length params))) '(#\/ #\\))
                              (car (regexp-match #rx".*[^/\\\\]+" params))
                              params)]
-                   [dir-name (if (file-name-from-path path)
-                                 (path->string (file-name-from-path path))
-                                 #f)]
-                   [parent-path (if (and dir-name (path-only path))
-                                    (path->string (path-only path))
-                                    #f)]
+                   [dir-name (and (file-name-from-path path)
+                                  (path->string (file-name-from-path path)))]
+                   [parent-path (and dir-name (path-only path)
+                                     (path->string (path-only path)))]
                    [user current-ftp-user])
               (cond
                 ((not dir-name)
@@ -834,12 +841,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       (print-crlf/encoding** 'STORE-FILE-PERM-DENIED))))]
         
         (if params
-            (let* ([file-name (if (file-name-from-path params)
-                                  (path->string (file-name-from-path params))
-                                  #f)]
-                   [parent-path (if (and file-name (path-only params))
-                                    (path->string (path-only params))
-                                    #f)])
+            (let* ([file-name (and (file-name-from-path params)
+                                   (path->string (file-name-from-path params)))]
+                   [parent-path (and file-name (path-only params)
+                                     (path->string (path-only params)))])
               (cond
                 ((not file-name)
                  (print-crlf/encoding** 'CANT-STORE-FILE))
@@ -1152,12 +1157,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [path (if new-dir?
                                  (regexp-match #rx".*[^/\\\\]+" params)
                                  params)]
-                       [name (if (file-name-from-path path)
-                                 (path->string (file-name-from-path path))
-                                 #f)]
-                       [parent-path (if (and name (path-only path))
-                                        (path->string (path-only path))
-                                        #f)]
+                       [name (and (file-name-from-path path)
+                                  (path->string (file-name-from-path path)))]
+                       [parent-path (and name (path-only path)
+                                         (path->string (path-only path)))]
                        [user current-ftp-user]
                        [curr-dir *current-dir*])
                   (cond
@@ -1455,16 +1458,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       #'server-2-host)
     
     (define-syntax (passive-1-ports-from stx)
-      #'(ftp-server-params-passive-1-ports-from server-params))
+      #'(passive-ports-from (ftp-server-params-passive-1-ports server-params)))
     
     (define-syntax (passive-1-ports-to stx)
-      #'(ftp-server-params-passive-1-ports-to server-params))
+      #'(passive-ports-to (ftp-server-params-passive-1-ports server-params)))
     
     (define-syntax (passive-2-ports-from stx)
-      #'(ftp-server-params-passive-2-ports-from server-params))
+      #'(passive-ports-from (ftp-server-params-passive-2-ports server-params)))
     
     (define-syntax (passive-2-ports-to stx)
-      #'(ftp-server-params-passive-2-ports-to server-params))
+      #'(passive-ports-to (ftp-server-params-passive-2-ports server-params)))
     
     (define-syntax (default-root-dir stx)
       #'(ftp-server-params-default-root-dir server-params))
@@ -1486,22 +1489,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define-syntax (free-passive-1-port stx)
       (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-free-passive-1-port! server-params expr)]
-        [_ #'(ftp-server-params-free-passive-1-port server-params)]))
+        [(_ expr) 
+         #'(set-passive-ports-free! (ftp-server-params-passive-1-ports server-params) expr)]
+        [_ #'(passive-ports-free (ftp-server-params-passive-1-ports server-params))]))
     
     (define-syntax (free-passive-2-port stx)
       (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-free-passive-2-port! server-params expr)]
-        [_ #'(ftp-server-params-free-passive-2-port server-params)]))
+        [(_ expr) 
+         #'(set-passive-ports-free! (ftp-server-params-passive-2-ports server-params) expr)]
+        [_ #'(passive-ports-free (ftp-server-params-passive-2-ports server-params))]))
     
     (define (read-request input-port)
-      (if (byte-ready? input-port)
-          (let ([line (read-bytes-line input-port)])
-            (if (eof-object? line)
-                line
-                (let ([s (request-bytes->string/locale-encoding line)])
-                  (substring s 0 (sub1 (string-length s))))))
-          #f))
+      (and (byte-ready? input-port)
+           (let ([line (read-bytes-line input-port)])
+             (if (eof-object? line)
+                 line
+                 (let ([s (request-bytes->string/locale-encoding line)])
+                   (substring s 0 (sub1 (string-length s))))))))
     
     (define (real-path->ftp-path real-path [drop-tail-elem 0])
       (simplify-ftp-path (substring real-path (string-length *root-dir*)) drop-tail-elem))
@@ -1597,7 +1601,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("APPE" ,(λ (params) (STORE-FILE params 'append)) . "APPE <SP> <pathname>")
               ("CDUP" ,CDUP-COMMAND . "CDUP")
               ("CLNT" ,CLNT-COMMAND . "CLNT <SP> <client-name>")
-              ("CWD" ,CWD-COMMAND . "CWD <SP> <pathname>")
+              ("CWD"  ,CWD-COMMAND . "CWD <SP> <pathname>")
               ("DELE" ,DELE-COMMAND . "DELE <SP> <pathname>")
               ("EPRT" ,EPRT-COMMAND . "EPRT <SP> <d> <address-family> <d> <ip-addr> <d> <port> <d>")
               ("EPSV" ,EPSV-COMMAND . "EPSV [<SP> (<address-family> | ALL)]")
@@ -1606,7 +1610,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("LANG" ,LANG-COMMAND . "LANG <SP> <lang-tag>")
               ("LIST" ,(λ (params) (DIR-LIST params)) . "LIST [<SP> <pathname>]")
               ("MDTM" ,MDTM-COMMAND . "MDTM <SP> <pathname>")
-              ("MKD" ,MKD-COMMAND . "MKD <SP> <pathname>")
+              ("MKD"  ,MKD-COMMAND . "MKD <SP> <pathname>")
               ("MLSD" ,MLSD-COMMAND . "MLSD [<SP> <pathname>]")
               ("MLST" ,MLST-COMMAND . "MLST [<SP> <pathname>]")
               ("MODE" ,MODE-COMMAND . "MODE <SP> <mode-code>")
@@ -1618,12 +1622,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("PBSZ" ,PBSZ-COMMAND . "PBSZ <SP> <num>") ; error!
               ("PORT" ,PORT-COMMAND . "PORT <SP> <host-port>")
               ("PROT" ,PROT-COMMAND . "PROT <SP> <code>") ; error!
-              ("PWD" ,PWD-COMMAND . "PWD")
+              ("PWD"  ,PWD-COMMAND . "PWD")
               ("QUIT" ,QUIT-COMMAND . "QUIT")
               ("REIN" ,REIN-COMMAND . "REIN")
               ("REST" ,REST-COMMAND . "REST <SP> <marker>")
               ("RETR" ,RETR-COMMAND . "RETR <SP> <pathname>")
-              ("RMD" ,RMD-COMMAND . "RMD <SP> <pathname>")
+              ("RMD"  ,RMD-COMMAND . "RMD <SP> <pathname>")
               ("RNFR" ,RNFR-COMMAND . "RNFR <SP> <pathname>")
               ("RNTO" ,RNTO-COMMAND . "RNTO <SP> <pathname>")
               ("SITE" ,SITE-COMMAND . "SITE <SP> <string>")
@@ -1768,7 +1772,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (release-encoding-proc)
     (super-new)))
 
-(define ftp-server%
+(define host/c (or/c host-string? not))
+(define ssl-protocol/c (or/c ssl-protocol? not))
+(define not-null-string/c (and/c string? (λ(dir) (not (string=? dir "")))))
+(define ssl-certificate/c (or/c not-null-string/c not))
+
+(define/contract ftp-server%
+  (class/c (init-field [welcome-message         string?]
+                       
+                       [server-1-host           host/c]
+                       [server-1-port           port-number?]
+                       [server-1-encryption     ssl-protocol/c]
+                       [server-1-certificate    ssl-certificate/c]
+                       
+                       [server-2-host           host/c]
+                       [server-2-port           port-number?]
+                       [server-2-encryption     ssl-protocol/c]
+                       [server-2-certificate    ssl-certificate/c]
+                       
+                       [max-allow-wait          exact-nonnegative-integer?]
+                       [transfer-wait-time      exact-nonnegative-integer?]
+                       
+                       [passive-1-ports         passive-ports?]
+                       [passive-2-ports         passive-ports?]
+                       
+                       [default-root-dir        not-null-string/c]
+                       [default-locale-encoding string?]
+                       [log-output-port         output-port?]))
+  
   (class (ftp-utils% (ftp-vfs% object%))
     (inherit get-params*
              ftp-dir-exists?
@@ -1781,20 +1812,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [server-1-host           "127.0.0.1"]
                 [server-1-port           21]
                 [server-1-encryption     #f]
-                [server-1-certificate    "certs/server-1.pem"]
+                [server-1-certificate    #f]
                 
                 [server-2-host           #f]
-                [server-2-port           21]
+                [server-2-port           #f]
                 [server-2-encryption     #f]
-                [server-2-certificate    "certs/server-2.pem"]
+                [server-2-certificate    #f]
                 
                 [max-allow-wait          50]
                 [transfer-wait-time      120]
                 
-                [passive-1-ports-from    40000]
-                [passive-1-ports-to      40599]
-                [passive-2-ports-from    40000]
-                [passive-2-ports-to      40599]
+                [passive-1-ports        (make-passive-ports 40000 40599)]
+                [passive-2-ports        (make-passive-ports 40000 40599)]
                 
                 [default-root-dir        "ftp-dir"]
                 [default-locale-encoding "UTF-8"]
@@ -1835,12 +1864,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define/public (start)
       (when (eq? state 'stopped)
         (set! server-custodian (make-custodian))
-        (set! server-params (ftp-server-params passive-1-ports-from
-                                               passive-1-ports-to
-                                               passive-1-ports-from    ;free-passive-1-port
-                                               passive-2-ports-from
-                                               passive-2-ports-to 
-                                               passive-2-ports-from    ;free-passive-2-port
+        (set! server-params (ftp-server-params passive-1-ports
+                                               passive-2-ports
                                                server-1-host
                                                server-2-host
                                                default-root-dir
@@ -1851,18 +1876,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (init-ftp-dirs default-root-dir)
         (parameterize ([current-custodian server-custodian])
           (when (and server-1-host server-1-port)
-            (let* ([ssl-server-ctx (if (and server-1-encryption server-1-certificate)
-                                       (let ([ctx (ssl-make-server-context server-1-encryption)])
-                                         (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
-                                         (ssl-load-private-key! ctx server-1-certificate #t #f default-locale-encoding)
-                                         ctx)
-                                       #f)]
-                   [ssl-client-ctx (if (and server-1-encryption server-1-certificate)
-                                       (let ([ctx (ssl-make-client-context server-1-encryption)])
-                                         (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
-                                         (ssl-load-private-key! ctx server-1-certificate #t #f default-locale-encoding)
-                                         ctx)
-                                       #f)]
+            (let* ([ssl-server-ctx 
+                    (and/exc server-1-encryption server-1-certificate
+                             (let ([ctx (ssl-make-server-context server-1-encryption)])
+                               (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
+                               (ssl-load-private-key! ctx server-1-certificate #t #f default-locale-encoding)
+                               ctx))]
+                   [ssl-client-ctx 
+                    (and/exc server-1-encryption server-1-certificate
+                             (let ([ctx (ssl-make-client-context server-1-encryption)])
+                               (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
+                               (ssl-load-private-key! ctx server-1-certificate #t #f default-locale-encoding)
+                               ctx))]
                    [listener (if ssl-server-ctx
                                  (ssl-listen server-1-port (random 123456789) #t server-1-host ssl-server-ctx)
                                  (tcp-listen server-1-port max-allow-wait #t server-1-host))])
@@ -1876,18 +1901,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                     (main-loop))])
                 (set! server-1-thread (thread main-loop)))))
           (when (and server-2-host server-2-port)
-            (let* ([ssl-server-ctx (if (and server-2-encryption server-2-certificate)
-                                       (let ([ctx (ssl-make-server-context server-2-encryption)])
-                                         (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
-                                         (ssl-load-private-key! ctx server-2-certificate #t #f default-locale-encoding)
-                                         ctx)
-                                       #f)]
-                   [ssl-client-ctx (if (and server-2-encryption server-2-certificate)
-                                       (let ([ctx (ssl-make-client-context server-2-encryption)])
-                                         (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
-                                         (ssl-load-private-key! ctx server-2-certificate #t #f default-locale-encoding)
-                                         ctx)
-                                       #f)]
+            (let* ([ssl-server-ctx 
+                    (and/exc server-2-encryption server-2-certificate
+                             (let ([ctx (ssl-make-server-context server-2-encryption)])
+                               (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
+                               (ssl-load-private-key! ctx server-2-certificate #t #f default-locale-encoding)
+                               ctx))]
+                   [ssl-client-ctx 
+                    (and/exc server-2-encryption server-2-certificate
+                             (let ([ctx (ssl-make-client-context server-2-encryption)])
+                               (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
+                               (ssl-load-private-key! ctx server-2-certificate #t #f default-locale-encoding)
+                               ctx))]
                    [listener (if ssl-server-ctx
                                  (ssl-listen server-2-port (random 123456789) #t server-2-host ssl-server-ctx)
                                  (tcp-listen server-2-port max-allow-wait #t server-2-host))])
@@ -1919,14 +1944,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define-syntax (passive-2-host stx) #'server-2-host)
     
-    (define-syntax (passive-1-listeners stx)
-      (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-passive-1-listeners! server-params expr)]
-        [_ #'(ftp-server-params-passive-1-listeners server-params)]))
-    
-    (define-syntax (passive-2-listeners stx)
-      (syntax-case stx ()
-        [(_ expr) #'(set-ftp-server-params-passive-2-listeners! server-params expr)]
-        [_ #'(ftp-server-params-passive-2-listeners server-params)]))
+    ;    (define-syntax (passive-1-listeners stx)
+    ;      (syntax-case stx ()
+    ;        [(_ expr) #'(set-ftp-server-params-passive-1-listeners! server-params expr)]
+    ;        [_ #'(ftp-server-params-passive-1-listeners server-params)]))
+    ;    
+    ;    (define-syntax (passive-2-listeners stx)
+    ;      (syntax-case stx ()
+    ;        [(_ expr) #'(set-ftp-server-params-passive-2-listeners! server-params expr)]
+    ;        [_ #'(ftp-server-params-passive-2-listeners server-params)]))
     
     (super-new)))
