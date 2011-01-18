@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.1.4
+Racket FTP Server Library v1.1.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -1798,7 +1798,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        
                        [default-root-dir        not-null-string/c]
                        [default-locale-encoding string?]
-                       [log-output-port         output-port?]))
+                       [log-output-port         output-port?])
+           [add-ftp-user (string? 
+                          not-null-string/c string? 
+                          not-null-string/c (non-empty-listof not-null-string/c) not-null-string/c . ->m . void?)])
   
   (class (ftp-utils% (ftp-vfs% object%))
     (inherit get-params*
