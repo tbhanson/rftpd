@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.1.5
+Racket FTP Server Library v1.1.6
 ----------------------------------------------------------------------
 
 Summary:
@@ -61,6 +61,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    ;server-1-ssl-context
    ;server-2-ssl-context
    
+   server-responses
+   
    default-root-dir
    
    default-locale-encoding
@@ -78,6 +80,127 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ;;
 (define ftp-run-date (srfi/19:current-date))
 (define ftp-date-zone-offset (srfi/19:date-zone-offset ftp-run-date))
+
+(define default-server-responses
+  (make-hash
+   '((SYNTAX-ERROR (EN . "501 ~a Syntax error in parameters or arguments.")
+                   (RU . "501 ~a Синтаксическая ошибка (неверный параметр или аргумент)."))
+     (WELCOME (EN . "220 ~a")
+              (RU . "220 ~a"))
+     (CMD-NOT-IMPLEMENTED (EN . "502 ~a not implemented.")
+                          (RU . "502 Команда ~a не реализована."))
+     (PLEASE-LOGIN (EN . "530 Please login with USER and PASS.")
+                   (RU . "530 Пожалуйста авторизируйтесь используя USER и PASS."))
+     (ANONYMOUS-LOGIN (EN . "331 Anonymous login ok, send your complete email address as your password.")
+                      (RU . "331 Анонимный логин корректен, в качестве пароля используйте Ваш email."))
+     (PASSW-REQUIRED (EN . "331 Password required for ~a")
+                     (RU . "331 Введите пароль для пользователя ~a"))
+     (LOGIN-INCORRECT (EN . "530 Login incorrect.")
+                      (RU . "530 Вход не выполнен (введены не верные данные)."))
+     (ANONYMOUS-LOGGED (EN . "230 Anonymous access granted.")
+                       (RU . "230 Доступ анонимному пользователю предоставлен."))
+     (USER-LOGGED (EN . "230 User ~a logged in.")
+                  (RU . "230 Пользователь ~a успешно прошел идентификацию."))
+     (SERVICE-READY (EN . "220 Service ready for new user.")
+                    (RU . "220 Служба подготовлена для следующей авторизации."))
+     (QUIT (EN . "221 Goodbye.") 
+           (RU . "221 До свидания."))
+     (ABORT (EN . "226 Abort successful.") 
+            (RU . "226 Текущая операция прервана."))
+     (SYSTEM (EN . "215 UNIX (Unix-like)") 
+             (RU. "215 UNIX (Unix-подобная)"))
+     (CURRENT-DIR (EN . "257 ~s is current directory.")
+                  (RU . "257 ~s - текущий каталог."))
+     (CMD-SUCCESSFUL (EN . "~a ~a command successful.")
+                     (RU . "~a Команда ~a выполнена."))
+     (END (EN . "~a End") 
+          (RU . "~a Конец"))
+     (FEAT-LIST (EN . "211-Extensions supported:") 
+                (RU . "211-Поддерживаемые расширения:"))
+     (RESTART (EN . "350 Restart marker accepted.") 
+              (RU . "350 Рестарт-маркер установлен."))
+     (STATUS-LIST (EN . "213-Status of ~s:")
+                  (RU . "213-Статус ~s:"))
+     (STATUS-INFO-1 (EN . "211-FTP Server status:")
+                    (RU . "211-Статус FTP Сервера:"))
+     (STATUS-INFO-2 (EN . " Connected to ~a")
+                    (RU . " Подключен к ~a"))
+     (STATUS-INFO-3 (EN . " Logged in as ~a")
+                    (RU . " Вы вошли как ~a"))
+     (STATUS-INFO-4 (EN . " TYPE: ~a; STRU: ~a; MODE: ~a")
+                    (RU . " TYPE: ~a; STRU: ~a; MODE: ~a"))
+     (SET-CMD (EN . "~a ~a set to ~a.")
+              (RU . "~a ~a установлен в ~a."))
+     (MISSING-PARAMS (EN . "504 Command not implemented for that parameter.")
+                     (RU . "504 Команда не применима для такого параметра."))
+     (DIR-NOT-FOUND (EN . "550 Directory not found.")
+                    (RU . "550 Каталог отсутствует."))
+     (PERM-DENIED (EN . "550 Permission denied.")
+                  (RU . "Доступ запрещен."))
+     (UNSUPTYPE (EN . "501 Unsupported type. Supported types are I and A.")
+                (RU . "501 Неподдерживаемый тип. Поддерживаемые типы I и А."))
+     (UNKNOWN-TYPE (EN . "501 Unknown ~a type.")
+                   (RU . "501 Неизвестный ~a тип."))
+     (DIR-EXIST (EN . "550 Can't create directory. Directory exist!")
+                (RU . "550 Невозможно создать каталог. Каталог существует!"))
+     (DIR-CREATED (EN . "257 ~s - directory successfully created.")
+                  (RU . "257 ~s - создан каталог."))
+     (CREATE-DIR-PERM-DENIED (EN . "550 Can't create directory. Permission denied!")
+                             (RU . "550 Невозможно создать каталог. Доступ запрещен!"))
+     (CANT-CREATE-DIR (EN . "550 Can't create directory.")
+                      (RU . "550 Невозможно создать каталог."))
+     (DELDIR-NOT-EMPTY (EN . "550 Can't delete directory. Directory not empty!")
+                       (RU . "550 Не удается удалить каталог. Каталог не пуст!"))
+     (DELDIR-PERM-DENIED (EN . "550 Can't delete directory. Permission denied!")
+                         (RU ."550 Не удается удалить каталог. Доступ запрещен!"))
+     (STORE-FILE-PERM-DENIED (EN . "550 Can't store file. Permission denied!")
+                             (RU . "550 Невозможно сохранить файл. Доступ запрещен!"))
+     (CANT-STORE-FILE (EN . "550 Can't store file.")
+                      (RU . "550 Невозможно сохранить файл."))
+     (DELFILE-PERM-DENIED (EN . "550 Can't delete file. Permission denied!")
+                          (RU . "550 Не удается удалить файл. Доступ запрещен!"))
+     (FILE-NOT-FOUND (EN . "550 File not found.")
+                     (RU . "550 Файл не найден."))
+     (FILE-DIR-NOT-FOUND (EN . "550 File or directory not found.")
+                         (RU . "550 Файл или каталог отсутствует."))
+     (MLST-LISTING (EN . "250-Listing:")
+                   (RU . "250-Листинг:"))
+     (UTF8-ON (EN . "200 UTF8 mode enabled.")
+              (RU . "200 Включен режим UTF8."))
+     (UTF8-OFF (EN . "200 UTF8 mode disabled.")
+               (RU . "200 Отключен режим UTF8."))
+     (MLST-ON (EN . "200 MLST modes enabled.")
+              (RU . "200 Включены все доступные MLST режимы."))
+     (RENAME-OK (EN . "350 File or directory exists, ready for destination name.")
+                (RU . "350 Файл или каталог существует, ожидается переименование."))
+     (CANT-RENAME-EXIST (EN . "550 File or directory exist.")
+                        (RU . "550 Обнаружен файл или каталог с подобным именем."))
+     (CANT-RENAME (EN . "550 Can't rename file or directory.")
+                  (RU . "550 Невозможно переименовать файл или каталог."))
+     (RENAME-PERM-DENIED (EN . "550 Can't rename file or directory. Permission denied!")
+                         (RU . "550 Невозможно переименовать файл или каталог. Доступ запрещен!"))
+     (CMD-BAD-SEQ (EN . "503 Bad sequence of commands.")
+                  (RU . "503 Соблюдайте последовательность команд!"))
+     (PASV (EN . "227 Entering Passive Mode (~a,~a,~a,~a,~a,~a)")
+           (RU . "227 Переход в Пассивный Режим (~a,~a,~a,~a,~a,~a)"))
+     (UNKNOWN-CMD (EN . "501 Unknown command ~a.")
+                  (RU . "501 Неизвестная команда ~a."))
+     (HELP (EN . "214 Syntax: ~a")
+           (RU . "214 Синтаксис: ~a"))
+     (HELP-LISTING (EN . "214-The following commands are recognized:")
+                   (RU . "214-Реализованы следующие команды:"))
+     (TRANSFER-ABORTED (EN . "426 Connection closed; transfer aborted.")
+                       (RU . "426 Соединение закрыто; передача прервана."))
+     (OPEN-DATA-CONNECTION (EN . "150 Opening ~a mode data connection.")
+                           (RU . "150 Открыт ~a режим передачи данных."))
+     (TRANSFER-OK (EN . "226 Transfer complete.")
+                  (RU . "226 Передача завершена."))
+     (CLNT (EN . "200 Don't care.")
+           (RU . "200 Не имеет значения."))
+     (EPSV (EN . "229 Entering Extended Passive Mode (|||~a|)")
+           (RU . "229 Переход в Расширенный Пассивный Режим (|||~a|)"))
+     (BAD-PROTOCOL (EN . "522 Bad network protocol.")
+                   (RU . "522 Неверный сетевой протокол.")))))
 
 (define-syntax (and/exc stx)
   (syntax-case stx ()
@@ -123,6 +246,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define ftp-vfs%
   (mixin () ()
     (super-new)
+    
+    (define/public (real-path->ftp-path real-path root-dir [drop-tail-elem 0])
+      (simplify-ftp-path (substring real-path (string-length root-dir)) drop-tail-elem))
     
     (define/public (ftp-file-or-dir-full-info sys-file)
       (call-with-input-file sys-file
@@ -238,6 +364,27 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (let ([p (regexp-match #rx".*[^ \t]+" (car p))])
                       (and p (car p))))))))
     
+    (define/public (alarm-clock period count [event (λ() 1)])
+      (let* ([tick count]
+             [reset (λ () (set! tick count))])
+        (thread (λ ()
+                  (do () [(<= tick 0) (event)]
+                    (sleep period)
+                    (set! tick (sub1 tick)))))
+        reset))))
+
+(define ftp-encoding%
+  (mixin () ()
+    (super-new)
+    (init-field locale-encoding
+                current-lang
+                server-responses
+                client-output-port)
+    
+    (field [print/locale-encoding #f]
+           [request-bytes->string/locale-encoding #f]
+           [list-string->bytes/locale-encoding #f])
+    
     ;(define/public (print-crlf/encoding encoding out text)
     ;  (print/encoding encoding out text)
     ;  (write-bytes #"\r\n" out))
@@ -259,23 +406,45 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (let-values ([(bstr len result) (bytes-convert conv (string->bytes/utf-8 str))])
           (bytes-close-converter conv)
           bstr)))
+
+    (define/public (release-encoding-proc)
+      (if (string=? locale-encoding "UTF-8")
+          (begin
+            (set! print/locale-encoding (λ (output-port text) (display text output-port)))
+            (set! request-bytes->string/locale-encoding (λ (bstr) (bytes->string/utf-8 bstr)))
+            (set! list-string->bytes/locale-encoding (λ (str) (string->bytes/utf-8 str))))
+          (begin
+            (set! print/locale-encoding (λ (output-port text) (print/encoding locale-encoding output-port text)))
+            (set! request-bytes->string/locale-encoding (λ (bstr) 
+                                                          (request-bytes->string/encoding locale-encoding bstr)))
+            (set! list-string->bytes/locale-encoding (λ (str) (list-string->bytes/encoding locale-encoding str))))))
     
-    (define/public (alarm-clock period count [event (λ() 1)])
-      (let* ([tick count]
-             [reset (λ () (set! tick count))])
-        (thread (λ ()
-                  (do () [(<= tick 0) (event)]
-                    (sleep period)
-                    (set! tick (sub1 tick)))))
-        reset))))
+    (define/public (print-crlf/encoding* text)
+      (print/locale-encoding client-output-port text)
+      (write-bytes #"\r\n" client-output-port)
+      (flush-output client-output-port))
+    
+    (define/public (print-crlf/encoding** response-tag . args)
+      (let ([response (cdr (assq current-lang (hash-ref server-responses response-tag)))])
+        (if (null? args)
+            (print/locale-encoding client-output-port response)
+            (print/locale-encoding client-output-port (apply format response args))))
+      (write-bytes #"\r\n" client-output-port)
+      (flush-output client-output-port))
+    
+    ))
 
 (define ftp-session%
-  (class (ftp-utils% (ftp-vfs% object%))
+  (class (ftp-encoding% (ftp-utils% (ftp-vfs% object%)))
     (inherit get-params
              alarm-clock
              print/encoding
+             print-crlf/encoding*
+             print-crlf/encoding**
+             release-encoding-proc
              list-string->bytes/encoding
              request-bytes->string/encoding
+             real-path->ftp-path
              ftp-file-or-dir-full-info
              simplify-ftp-path
              ftp-file-name-safe?
@@ -290,6 +459,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              ftp-file-or-dir-sysbytes/owner
              ftp-mkdir*
              ftp-mksys-file)
+    
+    (inherit-field print/locale-encoding
+                   request-bytes->string/locale-encoding
+                   list-string->bytes/locale-encoding
+                   
+                   locale-encoding
+                   current-lang
+                   client-output-port)
     ;;
     ;; ---------- Public Definitions ----------
     ;;
@@ -302,7 +479,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     (define *client-host* #f)
     (define *client-input-port* #f)
-    (define *client-output-port* #f)
     (define *current-server* #f)
     (define *current-protocol* #f)
     (define *user-id* #f)
@@ -318,14 +494,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define *passive-host&port* (ftp-host&port passive-1-host free-passive-1-port))
     (define *current-process* (make-custodian))
     (define *rename-path* #f)
-    (define *locale-encoding* default-locale-encoding)
     (define *mlst-features* (ftp-mlst-features #t #t #f))
-    (define *lang-list* '(EN RU))
-    (define *current-lang* 'EN)
+    (define *lang-list* (let ([r (hash-ref server-responses 'SYNTAX-ERROR)])
+                          (map car r)))
     
-    (define print/locale-encoding #f)
-    (define request-bytes->string/locale-encoding #f)
-    (define list-string->bytes/locale-encoding #f)
     (define net-accept (if ssl-server-context ssl-accept tcp-accept))
     (define net-addresses (if ssl-server-context ssl-addresses tcp-addresses))
     (define net-connect (if ssl-client-context 
@@ -336,7 +508,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define net-abandon-port (if ssl-server-context ssl-abandon-port tcp-abandon-port))
     (define *cmd-list* null)
     (define *cmd-voc* #f)
-    (define *server-responses* #f)
+    ;;
+    ;; ---------- Superclass Initialization ----------
+    ;;
+    (super-new [locale-encoding default-locale-encoding]
+               [current-lang (car *lang-list*)]
+               [server-responses server-responses]
+               [client-output-port #f])
     ;;
     ;; ---------- Public Methods ----------
     ;;
@@ -344,7 +522,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (let ([cust (make-custodian)])
         (with-handlers ([any/c (λ(e) (custodian-shutdown-all cust))])
           (parameterize ([current-custodian cust])
-            (set!-values (*client-input-port* *client-output-port*) (net-accept listener))
+            (set!-values (*client-input-port* client-output-port) (net-accept listener))
             (let-values ([(server-host client-host) (net-addresses *client-input-port*)])
               (set! *client-host* client-host)
               (set! *current-server* (if (and server-1-host 
@@ -469,7 +647,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (begin
             (kill-current-ftp-process)
             (print-crlf/encoding** 'QUIT)
-            (close-output-port *client-output-port*);ssl required
+            (close-output-port client-output-port);ssl required
             (raise 'quit))))
     
     (define (PWD-COMMAND params)
@@ -511,7 +689,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                    " LANG "
                                    (string-join (map (λ(l) 
                                                        (string-append (symbol->string l) 
-                                                                      (if (eq? l *current-lang*) "*" ""))) 
+                                                                      (if (eq? l current-lang) "*" ""))) 
                                                      *lang-list*)
                                                 ";")))
             (print-crlf/encoding* " EPRT")
@@ -581,8 +759,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (let ([lang (string->symbol (string-upcase params))])
             (if (memq lang *lang-list*)
                 (begin
-                  (set! *current-lang* lang)
-                  (print-crlf/encoding** 'SET-CMD 200 "LANG" *current-lang*))
+                  (set! current-lang lang)
+                  (print-crlf/encoding** 'SET-CMD 200 "LANG" current-lang))
                 (print-crlf/encoding** 'MISSING-PARAMS)))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
@@ -1036,10 +1214,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (if mode
                      (case (string->symbol (string-upcase (car mode)))
                        ((ON)
-                        (set! *locale-encoding* "UTF-8")
+                        (set! locale-encoding "UTF-8")
                         (print-crlf/encoding** 'UTF8-ON))
                        ((OFF)
-                        (set! *locale-encoding* default-locale-encoding)
+                        (set! locale-encoding default-locale-encoding)
                         (print-crlf/encoding** 'UTF8-OFF))
                        (else
                         (print-crlf/encoding** 'SYNTAX-ERROR "UTF8:")))
@@ -1117,8 +1295,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                         (string-append new-path ".ftp-racket-file")))
                             (rename-file-or-directory old-path new-path)
                             (print-log-event (format "Rename the file or directory from ~a to ~a"
-                                                     (real-path->ftp-path old-path)
-                                                     (real-path->ftp-path new-path)))
+                                                     (real-path->ftp-path old-path *root-dir*)
+                                                     (real-path->ftp-path new-path *root-dir*)))
                             (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RNTO")))
                       (print-crlf/encoding** 'RENAME-PERM-DENIED))))]
         
@@ -1358,7 +1536,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (flush-output fout)
                               (print-log-event (format "~a data to file ~a"
                                                        (if (eq? exists-mode 'append) "Append" "Store")
-                                                       (real-path->ftp-path new-file-full-path)))
+                                                       (real-path->ftp-path new-file-full-path *root-dir*)))
                               (print-crlf/encoding** 'TRANSFER-OK))))
                         #:mode 'binary
                         #:exists exists-mode))
@@ -1399,7 +1577,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (flush-output fout)
                               (print-log-event (format "~a data to file ~a"
                                                        (if (eq? exists-mode 'append) "Append" "Store")
-                                                       (real-path->ftp-path new-file-full-path)))
+                                                       (real-path->ftp-path new-file-full-path *root-dir*)))
                               (print-crlf/encoding** 'TRANSFER-OK)))))
                       #:mode 'binary
                       #:exists exists-mode))
@@ -1445,6 +1623,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax (log-output-port stx)
       #'(ftp-server-params-log-output-port server-params))
     
+    (define-syntax (server-responses stx)
+      #'(ftp-server-params-server-responses server-params))
+    
     (define-syntax (current-ftp-user stx)
       #'(hash-ref ftp-users *user-id*))
     
@@ -1470,34 +1651,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  line
                  (let ([s (request-bytes->string/locale-encoding line)])
                    (substring s 0 (sub1 (string-length s))))))))
-    
-    (define (real-path->ftp-path real-path [drop-tail-elem 0])
-      (simplify-ftp-path (substring real-path (string-length *root-dir*)) drop-tail-elem))
-    
-    (define (release-encoding-proc)
-      (if (string=? *locale-encoding* "UTF-8")
-          (begin
-            (set! print/locale-encoding (λ (output-port text) (display text output-port)))
-            (set! request-bytes->string/locale-encoding (λ (bstr) (bytes->string/utf-8 bstr)))
-            (set! list-string->bytes/locale-encoding (λ (str) (string->bytes/utf-8 str))))
-          (begin
-            (set! print/locale-encoding (λ (output-port text) (print/encoding *locale-encoding* output-port text)))
-            (set! request-bytes->string/locale-encoding (λ (bstr) 
-                                                          (request-bytes->string/encoding *locale-encoding* bstr)))
-            (set! list-string->bytes/locale-encoding (λ (str) (list-string->bytes/encoding *locale-encoding* str))))))
-    
-    (define (print-crlf/encoding* text)
-      (print/locale-encoding *client-output-port* text)
-      (write-bytes #"\r\n" *client-output-port*)
-      (flush-output *client-output-port*))
-    
-    (define (print-crlf/encoding** response-tag . args)
-      (let ([response (cdr (assq *current-lang* (hash-ref *server-responses* response-tag)))])
-        (if (null? args)
-            (print/locale-encoding *client-output-port* response)
-            (print/locale-encoding *client-output-port* (apply format response args))))
-      (write-bytes #"\r\n" *client-output-port*)
-      (flush-output *client-output-port*))
     
     (define (print-log-event msg [user-name? #t])
       (if user-name?
@@ -1609,132 +1762,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("XPWD" ,PWD-COMMAND . "XPWD")
               ("XRMD" ,RMD-COMMAND . "XRMD <SP> <pathname>")))
       
-      (set! *cmd-voc* (make-hash *cmd-list*))
-      
-      (set! *server-responses*
-            (make-hash
-             '((SYNTAX-ERROR (EN . "501 ~a Syntax error in parameters or arguments.")
-                             (RU . "501 ~a Синтаксическая ошибка (неверный параметр или аргумент)."))
-               (WELCOME (EN . "220 ~a")
-                        (RU . "220 ~a"))
-               (CMD-NOT-IMPLEMENTED (EN . "502 ~a not implemented.")
-                                    (RU . "502 Команда ~a не реализована."))
-               (PLEASE-LOGIN (EN . "530 Please login with USER and PASS.")
-                             (RU . "530 Пожалуйста авторизируйтесь используя USER и PASS."))
-               (ANONYMOUS-LOGIN (EN . "331 Anonymous login ok, send your complete email address as your password.")
-                                (RU . "331 Анонимный логин корректен, в качестве пароля используйте Ваш email."))
-               (PASSW-REQUIRED (EN . "331 Password required for ~a")
-                               (RU . "331 Введите пароль для пользователя ~a"))
-               (LOGIN-INCORRECT (EN . "530 Login incorrect.")
-                                (RU . "530 Вход не выполнен (введены не верные данные)."))
-               (ANONYMOUS-LOGGED (EN . "230 Anonymous access granted.")
-                                 (RU . "230 Доступ анонимному пользователю предоставлен."))
-               (USER-LOGGED (EN . "230 User ~a logged in.")
-                            (RU . "230 Пользователь ~a успешно прошел идентификацию."))
-               (SERVICE-READY (EN . "220 Service ready for new user.")
-                              (RU . "220 Служба подготовлена для следующей авторизации."))
-               (QUIT (EN . "221 Goodbye.") 
-                     (RU . "221 До свидания."))
-               (ABORT (EN . "226 Abort successful.") 
-                      (RU . "226 Текущая операция прервана."))
-               (SYSTEM (EN . "215 UNIX (Unix-like)") 
-                       (RU. "215 UNIX (Unix-подобная)"))
-               (CURRENT-DIR (EN . "257 ~s is current directory.")
-                            (RU . "257 ~s - текущий каталог."))
-               (CMD-SUCCESSFUL (EN . "~a ~a command successful.")
-                               (RU . "~a Команда ~a выполнена."))
-               (END (EN . "~a End") 
-                    (RU . "~a Конец"))
-               (FEAT-LIST (EN . "211-Extensions supported:") 
-                          (RU . "211-Поддерживаемые расширения:"))
-               (RESTART (EN . "350 Restart marker accepted.") 
-                        (RU . "350 Рестарт-маркер установлен."))
-               (STATUS-LIST (EN . "213-Status of ~s:")
-                            (RU . "213-Статус ~s:"))
-               (STATUS-INFO-1 (EN . "211-FTP Server status:")
-                              (RU . "211-Статус FTP Сервера:"))
-               (STATUS-INFO-2 (EN . " Connected to ~a")
-                              (RU . " Подключен к ~a"))
-               (STATUS-INFO-3 (EN . " Logged in as ~a")
-                              (RU . " Вы вошли как ~a"))
-               (STATUS-INFO-4 (EN . " TYPE: ~a; STRU: ~a; MODE: ~a")
-                              (RU . " TYPE: ~a; STRU: ~a; MODE: ~a"))
-               (SET-CMD (EN . "~a ~a set to ~a.")
-                        (RU . "~a ~a установлен в ~a."))
-               (MISSING-PARAMS (EN . "504 Command not implemented for that parameter.")
-                               (RU . "504 Команда не применима для такого параметра."))
-               (DIR-NOT-FOUND (EN . "550 Directory not found.")
-                              (RU . "550 Каталог отсутствует."))
-               (PERM-DENIED (EN . "550 Permission denied.")
-                            (RU . "Доступ запрещен."))
-               (UNSUPTYPE (EN . "501 Unsupported type. Supported types are I and A.")
-                          (RU . "501 Неподдерживаемый тип. Поддерживаемые типы I и А."))
-               (UNKNOWN-TYPE (EN . "501 Unknown ~a type.")
-                             (RU . "501 Неизвестный ~a тип."))
-               (DIR-EXIST (EN . "550 Can't create directory. Directory exist!")
-                          (RU . "550 Невозможно создать каталог. Каталог существует!"))
-               (DIR-CREATED (EN . "257 ~s - directory successfully created.")
-                            (RU . "257 ~s - создан каталог."))
-               (CREATE-DIR-PERM-DENIED (EN . "550 Can't create directory. Permission denied!")
-                                       (RU . "550 Невозможно создать каталог. Доступ запрещен!"))
-               (CANT-CREATE-DIR (EN . "550 Can't create directory.")
-                                (RU . "550 Невозможно создать каталог."))
-               (DELDIR-NOT-EMPTY (EN . "550 Can't delete directory. Directory not empty!")
-                                 (RU . "550 Не удается удалить каталог. Каталог не пуст!"))
-               (DELDIR-PERM-DENIED (EN . "550 Can't delete directory. Permission denied!")
-                                   (RU ."550 Не удается удалить каталог. Доступ запрещен!"))
-               (STORE-FILE-PERM-DENIED (EN . "550 Can't store file. Permission denied!")
-                                       (RU . "550 Невозможно сохранить файл. Доступ запрещен!"))
-               (CANT-STORE-FILE (EN . "550 Can't store file.")
-                                (RU . "550 Невозможно сохранить файл."))
-               (DELFILE-PERM-DENIED (EN . "550 Can't delete file. Permission denied!")
-                                    (RU . "550 Не удается удалить файл. Доступ запрещен!"))
-               (FILE-NOT-FOUND (EN . "550 File not found.")
-                               (RU . "550 Файл не найден."))
-               (FILE-DIR-NOT-FOUND (EN . "550 File or directory not found.")
-                                   (RU . "550 Файл или каталог отсутствует."))
-               (MLST-LISTING (EN . "250-Listing:")
-                             (RU . "250-Листинг:"))
-               (UTF8-ON (EN . "200 UTF8 mode enabled.")
-                        (RU . "200 Включен режим UTF8."))
-               (UTF8-OFF (EN . "200 UTF8 mode disabled.")
-                         (RU . "200 Отключен режим UTF8."))
-               (MLST-ON (EN . "200 MLST modes enabled.")
-                        (RU . "200 Включены все доступные MLST режимы."))
-               (RENAME-OK (EN . "350 File or directory exists, ready for destination name.")
-                          (RU . "350 Файл или каталог существует, ожидается переименование."))
-               (CANT-RENAME-EXIST (EN . "550 File or directory exist.")
-                                  (RU . "550 Обнаружен файл или каталог с подобным именем."))
-               (CANT-RENAME (EN . "550 Can't rename file or directory.")
-                            (RU . "550 Невозможно переименовать файл или каталог."))
-               (RENAME-PERM-DENIED (EN . "550 Can't rename file or directory. Permission denied!")
-                                   (RU . "550 Невозможно переименовать файл или каталог. Доступ запрещен!"))
-               (CMD-BAD-SEQ (EN . "503 Bad sequence of commands.")
-                            (RU . "503 Соблюдайте последовательность команд!"))
-               (PASV (EN . "227 Entering Passive Mode (~a,~a,~a,~a,~a,~a)")
-                     (RU . "227 Переход в Пассивный Режим (~a,~a,~a,~a,~a,~a)"))
-               (UNKNOWN-CMD (EN . "501 Unknown command ~a.")
-                            (RU . "501 Неизвестная команда ~a."))
-               (HELP (EN . "214 Syntax: ~a")
-                     (RU . "214 Синтаксис: ~a"))
-               (HELP-LISTING (EN . "214-The following commands are recognized:")
-                             (RU . "214-Реализованы следующие команды:"))
-               (TRANSFER-ABORTED (EN . "426 Connection closed; transfer aborted.")
-                                 (RU . "426 Соединение закрыто; передача прервана."))
-               (OPEN-DATA-CONNECTION (EN . "150 Opening ~a mode data connection.")
-                                     (RU . "150 Открыт ~a режим передачи данных."))
-               (TRANSFER-OK (EN . "226 Transfer complete.")
-                            (RU . "226 Передача завершена."))
-               (CLNT (EN . "200 Don't care.")
-                     (RU . "200 Не имеет значения."))
-               (EPSV (EN . "229 Entering Extended Passive Mode (|||~a|)")
-                     (RU . "229 Переход в Расширенный Пассивный Режим (|||~a|)"))
-               (BAD-PROTOCOL (EN . "522 Bad network protocol.")
-                             (RU . "522 Неверный сетевой протокол."))))))
+      (set! *cmd-voc* (make-hash *cmd-list*)))
     
     (init)
-    (release-encoding-proc)
-    (super-new)))
+    (release-encoding-proc)))
 
 (define host/c (or/c host-string? not))
 (define ssl-protocol/c (or/c ssl-protocol? not))
@@ -1768,6 +1799,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           not-null-string/c (non-empty-listof not-null-string/c) not-null-string/c . ->m . void?)])
   
   (class (ftp-utils% (ftp-vfs% object%))
+    (super-new)
     (inherit get-params*
              ftp-dir-exists?
              ftp-mkdir*)
@@ -1835,6 +1867,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                passive-2-ports
                                                server-1-host
                                                server-2-host
+                                               default-server-responses
                                                default-root-dir
                                                default-locale-encoding
                                                log-output-port
@@ -1921,4 +1954,4 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;        [(_ expr) #'(set-ftp-server-params-passive-2-listeners! server-params expr)]
     ;        [_ #'(ftp-server-params-passive-2-listeners server-params)]))
     
-    (super-new)))
+    ))
