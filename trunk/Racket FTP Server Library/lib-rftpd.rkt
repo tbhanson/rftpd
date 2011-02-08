@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.1.6
+Racket FTP Server Library v1.1.7
 ----------------------------------------------------------------------
 
 Summary:
@@ -242,6 +242,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (and (port-number? from) (port-number? to) (from . < . to)
        (passive-ports from to from)))
 
+(define (short-print-log-event log-out client-host user-id msg [user-name? #t])
+  (if user-name?
+      (fprintf log-out
+               "~a [~a] ~a : ~a\n" (date->string (current-date) #t) client-host user-id msg)
+      (fprintf log-out
+               "~a [~a] ~a\n" (date->string (current-date) #t) client-host msg)))
+
+(define (alarm-clock period count [event (λ() 1)])
+  (let* ([tick count]
+         [reset (λ () (set! tick count))])
+    (thread (λ ()
+              (do () [(<= tick 0) (event)]
+                (sleep period)
+                (set! tick (sub1 tick)))))
+    reset))
 
 (define ftp-vfs%
   (mixin () ()
@@ -362,32 +377,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (let ([p (regexp-match #rx"[^ \t]+.*" (car p))])
                (and p
                     (let ([p (regexp-match #rx".*[^ \t]+" (car p))])
-                      (and p (car p))))))))
-    
-    (define/public (alarm-clock period count [event (λ() 1)])
-      (let* ([tick count]
-             [reset (λ () (set! tick count))])
-        (thread (λ ()
-                  (do () [(<= tick 0) (event)]
-                    (sleep period)
-                    (set! tick (sub1 tick)))))
-        reset))))
+                      (and p (car p))))))))))
 
 (define ftp-encoding%
   (mixin () ()
     (super-new)
-    (init-field locale-encoding
-                current-lang
-                server-responses
-                client-output-port)
     
     (field [print/locale-encoding #f]
            [request-bytes->string/locale-encoding #f]
            [list-string->bytes/locale-encoding #f])
-    
-    ;(define/public (print-crlf/encoding encoding out text)
-    ;  (print/encoding encoding out text)
-    ;  (write-bytes #"\r\n" out))
     
     (define/public (print/encoding encoding out text)
       (let ([conv (bytes-open-converter "UTF-8" encoding)])
@@ -406,8 +404,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (let-values ([(bstr len result) (bytes-convert conv (string->bytes/utf-8 str))])
           (bytes-close-converter conv)
           bstr)))
-
-    (define/public (release-encoding-proc)
+    
+    (define/public (read-request input-port)
+      (and (byte-ready? input-port)
+           (let ([line (read-bytes-line input-port)])
+             (if (eof-object? line)
+                 line
+                 (let ([s (request-bytes->string/locale-encoding line)])
+                   (substring s 0 (sub1 (string-length s))))))))
+    
+    (define/public (release-encoding-proc locale-encoding)
       (if (string=? locale-encoding "UTF-8")
           (begin
             (set! print/locale-encoding (λ (output-port text) (display text output-port)))
@@ -419,31 +425,203 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                           (request-bytes->string/encoding locale-encoding bstr)))
             (set! list-string->bytes/locale-encoding (λ (str) (list-string->bytes/encoding locale-encoding str))))))
     
-    (define/public (print-crlf/encoding* text)
-      (print/locale-encoding client-output-port text)
-      (write-bytes #"\r\n" client-output-port)
-      (flush-output client-output-port))
+    (define/public (print-crlf/encoding text out)
+      (print/locale-encoding out text)
+      (write-bytes #"\r\n" out)
+      (flush-output out))
     
-    (define/public (print-crlf/encoding** response-tag . args)
+    (define/public (print*-crlf/encoding out current-lang server-responses response-tag . args)
       (let ([response (cdr (assq current-lang (hash-ref server-responses response-tag)))])
         (if (null? args)
-            (print/locale-encoding client-output-port response)
-            (print/locale-encoding client-output-port (apply format response args))))
-      (write-bytes #"\r\n" client-output-port)
-      (flush-output client-output-port))
+            (print/locale-encoding out response)
+            (print/locale-encoding out (apply format response args))))
+      (write-bytes #"\r\n" out)
+      (flush-output out))))
+
+(define ftp-DTP%
+  (class (ftp-vfs% object%)
+    (super-new)
     
-    ))
+    (inherit ftp-mksys-file)
+    
+    (init-field *current-process*
+                *active-host&port*
+                *passive-host&port*
+                *restart-marker*
+                *DTP*
+                *representation-type*
+                *transfer-mode*
+                *file-structure*
+                [print-abort (λ() #f)]
+                [print-connect (λ() #f)]
+                [print-close (λ() #f)]
+                [print-ascii (λ(out data) #f)]
+                [log-file-event (λ(new-file-full-path exists-mode) #f)]
+                [net-connect (λ(host port) #f)]
+                [net-accept (λ(listener) #f)]
+                [net-listen (λ(host port) #f)])
+    
+    (define/public (ftp-data-transfer data [file? #f])
+      (case *DTP*
+        ((passive)
+         (passive-data-transfer data file?))
+        ((active)
+         (active-data-transfer data file?))))
+    
+    (define (active-data-transfer data file?)
+      (let ([host (ftp-host&port-host *active-host&port*)]
+            [port (ftp-host&port-port *active-host&port*)])
+        (set! *current-process* (make-custodian))
+        (parameterize ([current-custodian *current-process*])
+          (thread (λ ()
+                    (parameterize ([current-custodian *current-process*])
+                      (with-handlers ([any/c (λ (e) (print-abort))])
+                        (let-values ([(in out) (net-connect host port)])
+                          (print-connect)
+                          (let ([reset-alarm (alarm-clock 1 15 
+                                                          (λ()
+                                                            ;(displayln "Auto kill working process!" log-output-port)
+                                                            (custodian-shutdown-all *current-process*)))])
+                            (if file?
+                                (call-with-input-file data
+                                  (λ (in)
+                                    (let loop ([dat (read-bytes 1048576 in)])
+                                      (reset-alarm)
+                                      (unless (eof-object? dat)
+                                        (write-bytes dat out)
+                                        (loop (read-bytes 1048576 in))))))
+                                (case *representation-type*
+                                  ((ASCII)
+                                   (print-ascii out data))
+                                  ((Image)
+                                   (write-bytes data out)))))
+                          (flush-output out)
+                          ;(close-input-port in);ssl required
+                          ;(close-output-port out);ssl required
+                          (print-close)))
+                      ;(displayln  "Process complete!" log-output-port)
+                      (custodian-shutdown-all *current-process*)))))))
+    
+    (define (passive-data-transfer data file?)
+      (set! *current-process* (make-custodian))  
+      (parameterize ([current-custodian *current-process*])
+        (thread (λ ()
+                  (parameterize ([current-custodian *current-process*])
+                    (with-handlers ([any/c (λ (e) (print-abort))])
+                      (let ([listener (net-listen (ftp-host&port-host *passive-host&port*) 
+                                                  (ftp-host&port-port *passive-host&port*))])
+                        (let-values ([(in out) (net-accept listener)])
+                          (print-connect)
+                          (let ([reset-alarm (alarm-clock 1 15 
+                                                          (λ()
+                                                            ;(displayln "Auto kill working process!" log-output-port)
+                                                            (custodian-shutdown-all *current-process*)))])
+                            (if file?
+                                (call-with-input-file data
+                                  (λ (in)
+                                    (let loop ([dat (read-bytes 1048576 in)])
+                                      (reset-alarm)
+                                      (unless (eof-object? dat)
+                                        (write-bytes dat out)
+                                        (loop (read-bytes 1048576 in))))))
+                                (case *representation-type*
+                                  ((ASCII)
+                                   (print-ascii out data))
+                                  ((Image)
+                                   (write-bytes data out)))))
+                          ;(flush-output out)
+                          (close-output-port out);ssl required
+                          (print-close))))
+                    ;(displayln "Process complete!" log-output-port)
+                    (custodian-shutdown-all *current-process*))))))
+    
+    (define/public (ftp-store-file current-ftp-user new-file-full-path exists-mode)
+      (case *DTP*
+        ((passive)
+         (passive-store-file current-ftp-user new-file-full-path exists-mode))
+        ((active)
+         (active-store-file current-ftp-user new-file-full-path exists-mode))))
+    
+    (define (active-store-file current-ftp-user new-file-full-path exists-mode)
+      (let ([host (ftp-host&port-host *active-host&port*)]
+            [port (ftp-host&port-port *active-host&port*)])
+        (set! *current-process* (make-custodian))
+        (parameterize ([current-custodian *current-process*])
+          (thread (λ ()
+                    (with-handlers ([any/c (λ (e) (print-abort))])
+                      (call-with-output-file new-file-full-path
+                        (λ (fout)
+                          (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
+                            (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
+                                            (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
+                          (parameterize ([current-custodian *current-process*])
+                            (let-values ([(in out) (net-connect host port)])
+                              (print-connect)
+                              (when *restart-marker*
+                                (file-position fout *restart-marker*)
+                                (set! *restart-marker* #f))
+                              (let ([reset-alarm (alarm-clock 1 15 
+                                                              (λ()
+                                                                ;(displayln "Auto kill working process!" log-output-port)
+                                                                (custodian-shutdown-all *current-process*)))])
+                                (let loop ([dat (read-bytes 1048576 in)])
+                                  (reset-alarm)
+                                  (unless (eof-object? dat)
+                                    (write-bytes dat fout)
+                                    (loop (read-bytes 1048576 in)))))
+                              (flush-output fout)
+                              (log-file-event new-file-full-path exists-mode)
+                              (print-close))))
+                        #:mode 'binary
+                        #:exists exists-mode))
+                    ;(displayln "Process complete!" log-output-port)
+                    (custodian-shutdown-all *current-process*))))))
+    
+    (define (passive-store-file current-ftp-user new-file-full-path exists-mode)
+      (set! *current-process* (make-custodian))
+      (parameterize ([current-custodian *current-process*])
+        (thread (λ ()
+                  (with-handlers ([any/c (λ (e) (print-abort))])
+                    (call-with-output-file new-file-full-path
+                      (λ (fout)
+                        (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
+                          (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
+                                          (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
+                        (parameterize ([current-custodian *current-process*])
+                          (let ([listener (net-listen (ftp-host&port-host *passive-host&port*) 
+                                                      (ftp-host&port-port *passive-host&port*))])
+                            (let-values ([(in out) (net-accept listener)])
+                              (print-connect)
+                              (when *restart-marker*
+                                (file-position fout *restart-marker*)
+                                (set! *restart-marker* #f))
+                              (let ([reset-alarm (alarm-clock 1 15 
+                                                              (λ()
+                                                                ;(displayln "Auto kill working process!" log-output-port)
+                                                                (custodian-shutdown-all *current-process*)))])
+                                (let loop ([dat (read-bytes 1048576 in)])
+                                  (reset-alarm)
+                                  (unless (eof-object? dat)
+                                    (write-bytes dat fout)
+                                    (loop (read-bytes 1048576 in)))))
+                              (flush-output fout)
+                              (log-file-event new-file-full-path exists-mode)
+                              (print-close)))))
+                      #:mode 'binary
+                      #:exists exists-mode))
+                  ;(displayln "Process complete!" log-output-port)
+                  (custodian-shutdown-all *current-process*)))))))
 
 (define ftp-session%
-  (class (ftp-encoding% (ftp-utils% (ftp-vfs% object%)))
+  (class (ftp-encoding% (ftp-utils% ftp-DTP%))
     (inherit get-params
-             alarm-clock
              print/encoding
-             print-crlf/encoding*
-             print-crlf/encoding**
+             print-crlf/encoding
+             print*-crlf/encoding
              release-encoding-proc
              list-string->bytes/encoding
              request-bytes->string/encoding
+             read-request
              real-path->ftp-path
              ftp-file-or-dir-full-info
              simplify-ftp-path
@@ -458,15 +636,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              ftp-dir-allow-delete-move?
              ftp-file-or-dir-sysbytes/owner
              ftp-mkdir*
-             ftp-mksys-file)
+             ftp-mksys-file
+             ftp-data-transfer
+             ftp-store-file)
     
     (inherit-field print/locale-encoding
                    request-bytes->string/locale-encoding
                    list-string->bytes/locale-encoding
                    
-                   locale-encoding
-                   current-lang
-                   client-output-port)
+                   *current-process*
+                   *active-host&port*
+                   *passive-host&port*
+                   *restart-marker*
+                   *DTP*
+                   *representation-type*
+                   *transfer-mode*
+                   *file-structure*)
     ;;
     ;; ---------- Public Definitions ----------
     ;;
@@ -479,24 +664,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     (define *client-host* #f)
     (define *client-input-port* #f)
+    (define *client-output-port* #f)
     (define *current-server* #f)
     (define *current-protocol* #f)
+    (define *locale-encoding* default-locale-encoding)
     (define *user-id* #f)
     (define *user-logged* #f)
     (define *root-dir* default-root-dir)
     (define *current-dir* "/")
-    (define *DTP* 'active)
-    (define *transfer-mode* 'Stream)
-    (define *representation-type* 'ASCII)
-    (define *file-structure* 'File)
-    (define *restart-marker* #f)
-    (define *active-host&port* (ftp-host&port "127.0.0.1" 20))
-    (define *passive-host&port* (ftp-host&port passive-1-host free-passive-1-port))
-    (define *current-process* (make-custodian))
     (define *rename-path* #f)
     (define *mlst-features* (ftp-mlst-features #t #t #f))
     (define *lang-list* (let ([r (hash-ref server-responses 'SYNTAX-ERROR)])
                           (map car r)))
+    (define *current-lang* (car *lang-list*))
     
     (define net-accept (if ssl-server-context ssl-accept tcp-accept))
     (define net-addresses (if ssl-server-context ssl-addresses tcp-addresses))
@@ -504,6 +684,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             (λ(host port)
                               (ssl-connect host port ssl-client-context))
                             tcp-connect))
+    (define net-listen (if ssl-server-context
+                           (λ(host port)
+                             (ssl-listen port (random 123456789) #t host ssl-server-context))
+                           (λ(host port)
+                             (tcp-listen port 1 #t host))))
     (define net-close (if ssl-server-context ssl-close tcp-close))
     (define net-abandon-port (if ssl-server-context ssl-abandon-port tcp-abandon-port))
     (define *cmd-list* null)
@@ -511,10 +696,26 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Superclass Initialization ----------
     ;;
-    (super-new [locale-encoding default-locale-encoding]
-               [current-lang (car *lang-list*)]
-               [server-responses server-responses]
-               [client-output-port #f])
+    (super-new [*current-process* (make-custodian)]
+               [*active-host&port* (ftp-host&port "127.0.0.1" 20)]
+               [*passive-host&port* (ftp-host&port passive-1-host free-passive-1-port)]
+               [*restart-marker* #f]
+               [*DTP* 'active]
+               [*representation-type* 'ASCII]
+               [*transfer-mode* 'Stream]
+               [*file-structure* 'File]
+               [print-abort (λ() (print-crlf/encoding** 'TRANSFER-ABORTED))]
+               [print-connect (λ() (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*))]
+               [print-close (λ() (print-crlf/encoding** 'TRANSFER-OK))]
+               [print-ascii print/locale-encoding]
+               [log-file-event (λ(new-file-full-path exists-mode) 
+                                 (print-log-event 
+                                  (format "~a data to file ~a"
+                                          (if (eq? exists-mode 'append) "Append" "Store")
+                                          (real-path->ftp-path new-file-full-path *root-dir*))))]
+               [net-connect net-connect]
+               [net-accept net-accept]
+               [net-listen net-listen])
     ;;
     ;; ---------- Public Methods ----------
     ;;
@@ -522,7 +723,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (let ([cust (make-custodian)])
         (with-handlers ([any/c (λ(e) (custodian-shutdown-all cust))])
           (parameterize ([current-custodian cust])
-            (set!-values (*client-input-port* client-output-port) (net-accept listener))
+            (set!-values (*client-input-port* *client-output-port*) (net-accept listener))
             (let-values ([(server-host client-host) (net-addresses *client-input-port*)])
               (set! *client-host* client-host)
               (set! *current-server* (if (and server-1-host 
@@ -647,7 +848,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (begin
             (kill-current-ftp-process)
             (print-crlf/encoding** 'QUIT)
-            (close-output-port client-output-port);ssl required
+            (close-output-port *client-output-port*);ssl required
             (raise 'quit))))
     
     (define (PWD-COMMAND params)
@@ -689,7 +890,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                    " LANG "
                                    (string-join (map (λ(l) 
                                                        (string-append (symbol->string l) 
-                                                                      (if (eq? l current-lang) "*" ""))) 
+                                                                      (if (eq? l *current-lang*) "*" ""))) 
                                                      *lang-list*)
                                                 ";")))
             (print-crlf/encoding* " EPRT")
@@ -759,8 +960,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (let ([lang (string->symbol (string-upcase params))])
             (if (memq lang *lang-list*)
                 (begin
-                  (set! current-lang lang)
-                  (print-crlf/encoding** 'SET-CMD 200 "LANG" current-lang))
+                  (set! *current-lang* lang)
+                  (print-crlf/encoding** 'SET-CMD 200 "LANG" *current-lang*))
                 (print-crlf/encoding** 'MISSING-PARAMS)))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
@@ -999,7 +1200,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            (if (ftp-file-exists? real-path)
                                (ftp-file-allow-write? real-path current-ftp-user)
                                #t))
-                      (ftp-store-file real-path exists-mode)
+                      (ftp-store-file current-ftp-user real-path exists-mode)
                       (print-crlf/encoding** 'STORE-FILE-PERM-DENIED))))]
         
         (if params
@@ -1031,7 +1232,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                  (loop (gensym "noname"))
                                  fname))]
                 [path (string-append *root-dir* *current-dir* "/" file-name)])
-           (ftp-store-file path 'truncate)))
+           (ftp-store-file current-ftp-user path 'truncate)))
         (else
          (print-crlf/encoding** 'STORE-FILE-PERM-DENIED))))
     
@@ -1214,15 +1415,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (if mode
                      (case (string->symbol (string-upcase (car mode)))
                        ((ON)
-                        (set! locale-encoding "UTF-8")
+                        (set! *locale-encoding* "UTF-8")
                         (print-crlf/encoding** 'UTF8-ON))
                        ((OFF)
-                        (set! locale-encoding default-locale-encoding)
+                        (set! *locale-encoding* default-locale-encoding)
                         (print-crlf/encoding** 'UTF8-OFF))
                        (else
                         (print-crlf/encoding** 'SYNTAX-ERROR "UTF8:")))
                      (print-crlf/encoding** 'SYNTAX-ERROR "UTF8:"))
-                 (release-encoding-proc)))
+                 (release-encoding-proc *locale-encoding*)))
               ((MLST)
                (let ([modes (regexp-match #rx"[^ \t]+.+" (substring params 4))])
                  (if modes
@@ -1417,172 +1618,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (for-each (λ (rec) (print-crlf/encoding* (format " ~a" (car rec)))) *cmd-list*)
             (print-crlf/encoding** 'END 214))))
     
-    (define (ftp-data-transfer data [file? #f])
-      (case *DTP*
-        ((passive)
-         (passive-data-transfer data file?))
-        ((active)
-         (active-data-transfer data file?))))
-    
-    (define (active-data-transfer data file?)
-      (let ([host (ftp-host&port-host *active-host&port*)]
-            [port (ftp-host&port-port *active-host&port*)])
-        (set! *current-process* (make-custodian))
-        (parameterize ([current-custodian *current-process*])
-          (thread (λ ()
-                    (parameterize ([current-custodian *current-process*])
-                      (with-handlers ([any/c (λ (e)
-                                               ;(printf "~s:~a\n" host port)
-                                               ;(displayln e)
-                                               (print-crlf/encoding** 'TRANSFER-ABORTED))])
-                        (let-values ([(in out) (net-connect host port)])
-                          (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
-                          (let ([reset-alarm (alarm-clock 1 15 
-                                                          (λ()
-                                                            ;(displayln "Auto kill working process!" log-output-port)
-                                                            (custodian-shutdown-all *current-process*)))])
-                            (if file?
-                                (call-with-input-file data
-                                  (λ (in)
-                                    (let loop ([dat (read-bytes 1048576 in)])
-                                      (reset-alarm)
-                                      (unless (eof-object? dat)
-                                        (write-bytes dat out)
-                                        (loop (read-bytes 1048576 in))))))
-                                (case *representation-type*
-                                  ((ASCII)
-                                   (print/locale-encoding out data))
-                                  ((Image)
-                                   (write-bytes data out)))))
-                          (flush-output out)
-                          ;(close-input-port in);ssl required
-                          ;(close-output-port out);ssl required
-                          (print-crlf/encoding** 'TRANSFER-OK)))
-                      ;(displayln  "Process complete!" log-output-port)
-                      (custodian-shutdown-all *current-process*)))))))
-    
-    (define (passive-data-transfer data file?)
-      (set! *current-process* (make-custodian))  
-      (parameterize ([current-custodian *current-process*])
-        (thread (λ ()
-                  (parameterize ([current-custodian *current-process*])
-                    (with-handlers ([any/c (λ (e)
-                                             (print-crlf/encoding** 'TRANSFER-ABORTED))])
-                      (let* ([host (ftp-host&port-host *passive-host&port*)]
-                             [port (ftp-host&port-port *passive-host&port*)]
-                             [listener (if ssl-server-context
-                                           (ssl-listen port (random 123456789) #t host ssl-server-context)
-                                           (tcp-listen port 1 #t host))])
-                        (let-values ([(in out) (net-accept listener)])
-                          (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
-                          (let ([reset-alarm (alarm-clock 1 15 
-                                                          (λ()
-                                                            ;(displayln "Auto kill working process!" log-output-port)
-                                                            (custodian-shutdown-all *current-process*)))])
-                            (if file?
-                                (call-with-input-file data
-                                  (λ (in)
-                                    (let loop ([dat (read-bytes 1048576 in)])
-                                      (reset-alarm)
-                                      (unless (eof-object? dat)
-                                        (write-bytes dat out)
-                                        (loop (read-bytes 1048576 in))))))
-                                (case *representation-type*
-                                  ((ASCII)
-                                   (print/locale-encoding out data))
-                                  ((Image)
-                                   (write-bytes data out)))))
-                          ;(flush-output out)
-                          (close-output-port out);ssl required
-                          (print-crlf/encoding** 'TRANSFER-OK))))
-                    ;(displayln "Process complete!" log-output-port)
-                    (custodian-shutdown-all *current-process*))))))
-    
-    (define (ftp-store-file new-file-full-path exists-mode)
-      (case *DTP*
-        ((passive)
-         (passive-store-file new-file-full-path exists-mode))
-        ((active)
-         (active-store-file new-file-full-path exists-mode))))
-    
-    (define (active-store-file new-file-full-path exists-mode)
-      (let ([host (ftp-host&port-host *active-host&port*)]
-            [port (ftp-host&port-port *active-host&port*)])
-        (set! *current-process* (make-custodian))
-        (parameterize ([current-custodian *current-process*])
-          (thread (λ ()
-                    (with-handlers ([any/c (λ (e)
-                                             (print-crlf/encoding** 'TRANSFER-ABORTED))])
-                      (call-with-output-file new-file-full-path
-                        (λ (fout)
-                          (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
-                            (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
-                                            (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
-                          (parameterize ([current-custodian *current-process*])
-                            (let-values ([(in out) (net-connect host port)])
-                              (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
-                              (when *restart-marker*
-                                (file-position fout *restart-marker*)
-                                (set! *restart-marker* #f))
-                              (let ([reset-alarm (alarm-clock 1 15 
-                                                              (λ()
-                                                                ;(displayln "Auto kill working process!" log-output-port)
-                                                                (custodian-shutdown-all *current-process*)))])
-                                (let loop ([dat (read-bytes 1048576 in)])
-                                  (reset-alarm)
-                                  (unless (eof-object? dat)
-                                    (write-bytes dat fout)
-                                    (loop (read-bytes 1048576 in)))))
-                              (flush-output fout)
-                              (print-log-event (format "~a data to file ~a"
-                                                       (if (eq? exists-mode 'append) "Append" "Store")
-                                                       (real-path->ftp-path new-file-full-path *root-dir*)))
-                              (print-crlf/encoding** 'TRANSFER-OK))))
-                        #:mode 'binary
-                        #:exists exists-mode))
-                    ;(displayln "Process complete!" log-output-port)
-                    (custodian-shutdown-all *current-process*))))))
-    
-    (define (passive-store-file new-file-full-path exists-mode)
-      (set! *current-process* (make-custodian))
-      (parameterize ([current-custodian *current-process*])
-        (thread (λ ()
-                  (with-handlers ([any/c (λ (e)
-                                           (print-crlf/encoding** 'TRANSFER-ABORTED))])
-                    (call-with-output-file new-file-full-path
-                      (λ (fout)
-                        (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
-                          (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
-                                          (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
-                        (parameterize ([current-custodian *current-process*])
-                          (let* ([host (ftp-host&port-host *passive-host&port*)]
-                                 [port (ftp-host&port-port *passive-host&port*)]
-                                 [listener (if ssl-server-context
-                                               (ssl-listen port (random 123456789) #t host ssl-server-context)
-                                               (tcp-listen port 1 #t host))])
-                            (let-values ([(in out) (net-accept listener)])
-                              (print-crlf/encoding** 'OPEN-DATA-CONNECTION *representation-type*)
-                              (when *restart-marker*
-                                (file-position fout *restart-marker*)
-                                (set! *restart-marker* #f))
-                              (let ([reset-alarm (alarm-clock 1 15 
-                                                              (λ()
-                                                                ;(displayln "Auto kill working process!" log-output-port)
-                                                                (custodian-shutdown-all *current-process*)))])
-                                (let loop ([dat (read-bytes 1048576 in)])
-                                  (reset-alarm)
-                                  (unless (eof-object? dat)
-                                    (write-bytes dat fout)
-                                    (loop (read-bytes 1048576 in)))))
-                              (flush-output fout)
-                              (print-log-event (format "~a data to file ~a"
-                                                       (if (eq? exists-mode 'append) "Append" "Store")
-                                                       (real-path->ftp-path new-file-full-path *root-dir*)))
-                              (print-crlf/encoding** 'TRANSFER-OK)))))
-                      #:mode 'binary
-                      #:exists exists-mode))
-                  ;(displayln "Process complete!" log-output-port)
-                  (custodian-shutdown-all *current-process*)))))
     
     (define-syntax (bad-auth-table stx)
       #'(ftp-server-params-bad-auth server-params))
@@ -1644,20 +1679,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          #'(set-passive-ports-free! (ftp-server-params-passive-2-ports server-params) expr)]
         [_ #'(passive-ports-free (ftp-server-params-passive-2-ports server-params))]))
     
-    (define (read-request input-port)
-      (and (byte-ready? input-port)
-           (let ([line (read-bytes-line input-port)])
-             (if (eof-object? line)
-                 line
-                 (let ([s (request-bytes->string/locale-encoding line)])
-                   (substring s 0 (sub1 (string-length s))))))))
+    (define-syntax-rule (print-crlf/encoding* txt)
+      (print-crlf/encoding txt *client-output-port*))
     
-    (define (print-log-event msg [user-name? #t])
-      (if user-name?
-          (fprintf log-output-port
-                   "~a [~a] ~a : ~a\n" (date->string (current-date) #t) *client-host* *user-id* msg)
-          (fprintf log-output-port
-                   "~a [~a] ~a\n" (date->string (current-date) #t) *client-host* msg)))
+    (define-syntax-rule (print-crlf/encoding** tag ...)
+      (print*-crlf/encoding *client-output-port* *current-lang* server-responses tag ...))
+    
+    (define-syntax-rule (print-log-event msg ...)
+      (short-print-log-event log-output-port *client-host* *user-id* msg ...))
     
     (define (seconds->mdtm-time-format seconds)
       (let ([dte (seconds->date (- seconds ftp-date-zone-offset))])
@@ -1762,10 +1791,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               ("XPWD" ,PWD-COMMAND . "XPWD")
               ("XRMD" ,RMD-COMMAND . "XRMD <SP> <pathname>")))
       
-      (set! *cmd-voc* (make-hash *cmd-list*)))
+      (set! *cmd-voc* (make-hash *cmd-list*))
+      (release-encoding-proc *locale-encoding*))
     
-    (init)
-    (release-encoding-proc)))
+    (init)))
 
 (define host/c (or/c host-string? not))
 (define ssl-protocol/c (or/c ssl-protocol? not))
