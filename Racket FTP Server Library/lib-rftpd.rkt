@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.1.8
+Racket FTP Server Library v1.1.9
 ----------------------------------------------------------------------
 
 Summary:
@@ -251,12 +251,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define (alarm-clock period count [event (λ() 1)])
   (let* ([tick count]
-         [reset (λ () (set! tick count))])
-    (thread (λ ()
-              (do () [(<= tick 0) (event)]
-                (sleep period)
-                (set! tick (sub1 tick)))))
-    reset))
+         [reset (λ () (set! tick count))]
+         [thd (thread (λ ()
+                        (do () [(<= tick 0) (event)]
+                          (sleep period)
+                          (set! tick (sub1 tick)))))]
+         [kill (λ() (kill-thread thd))])
+    (values reset kill)))
 
 (define ftp-vfs%
   (mixin () ()
@@ -474,66 +475,68 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (set! current-process (make-custodian))
         (parameterize ([current-custodian current-process])
           (thread (λ ()
-                    (parameterize ([current-custodian current-process])
-                      (with-handlers ([any/c (λ (e) (print-abort))])
-                        (let-values ([(in out) (net-connect host port)])
-                          (print-connect)
-                          (let ([reset-alarm (alarm-clock 1 15 
-                                                          (λ()
-                                                            ;(displayln "Auto kill working process!" log-output-port)
-                                                            (custodian-shutdown-all current-process)))])
-                            (if file?
-                                (call-with-input-file data
-                                  (λ (in)
-                                    (let loop ([dat (read-bytes 1048576 in)])
-                                      (reset-alarm)
-                                      (unless (eof-object? dat)
-                                        (write-bytes dat out)
-                                        (loop (read-bytes 1048576 in))))))
-                                (case representation-type
-                                  ((ASCII)
-                                   (print-ascii out data))
-                                  ((Image)
-                                   (write-bytes data out)))))
-                          (flush-output out)
-                          ;(close-input-port in);ssl required
-                          ;(close-output-port out);ssl required
-                          (print-close)))
-                      ;(displayln  "Process complete!" log-output-port)
-                      (custodian-shutdown-all current-process)))))))
+                    (with-handlers ([any/c (λ (e) (print-abort))])
+                      (let-values ([(in out) (net-connect host port)])
+                        (print-connect)
+                        (let-values ([(reset-alarm kill-alarm)
+                                      (alarm-clock 1 15 
+                                                   (λ()
+                                                     ;(displayln "Auto kill working process!" log-output-port)
+                                                     (custodian-shutdown-all current-process)))])
+                          (if file?
+                              (call-with-input-file data
+                                (λ (in)
+                                  (let loop ([dat (read-bytes 1048576 in)])
+                                    (reset-alarm)
+                                    (unless (eof-object? dat)
+                                      (write-bytes dat out)
+                                      (loop (read-bytes 1048576 in))))))
+                              (case representation-type
+                                ((ASCII)
+                                 (print-ascii out data))
+                                ((Image)
+                                 (write-bytes data out))))
+                          (kill-alarm))
+                        (flush-output out)
+                        ;(close-input-port in);ssl required
+                        ;(close-output-port out);ssl required
+                        (print-close)))
+                    ;(displayln  "Process complete!" log-output-port)
+                    (custodian-shutdown-all current-process))))))
     
     (define (passive-data-transfer data file?)
       (set! current-process (make-custodian))  
       (parameterize ([current-custodian current-process])
         (thread (λ ()
-                  (parameterize ([current-custodian current-process])
-                    (with-handlers ([any/c (λ (e) (print-abort))])
-                      (let ([listener (net-listen (ftp-host&port-host passive-host&port) 
-                                                  (ftp-host&port-port passive-host&port))])
-                        (let-values ([(in out) (net-accept listener)])
-                          (print-connect)
-                          (let ([reset-alarm (alarm-clock 1 15 
-                                                          (λ()
-                                                            ;(displayln "Auto kill working process!" log-output-port)
-                                                            (custodian-shutdown-all current-process)))])
-                            (if file?
-                                (call-with-input-file data
-                                  (λ (in)
-                                    (let loop ([dat (read-bytes 1048576 in)])
-                                      (reset-alarm)
-                                      (unless (eof-object? dat)
-                                        (write-bytes dat out)
-                                        (loop (read-bytes 1048576 in))))))
-                                (case representation-type
-                                  ((ASCII)
-                                   (print-ascii out data))
-                                  ((Image)
-                                   (write-bytes data out)))))
-                          ;(flush-output out)
-                          (close-output-port out);ssl required
-                          (print-close))))
-                    ;(displayln "Process complete!" log-output-port)
-                    (custodian-shutdown-all current-process))))))
+                  (with-handlers ([any/c (λ (e) (print-abort))])
+                    (let ([listener (net-listen (ftp-host&port-host passive-host&port) 
+                                                (ftp-host&port-port passive-host&port))])
+                      (let-values ([(in out) (net-accept listener)])
+                        (print-connect)
+                        (let-values ([(reset-alarm kill-alarm)
+                                      (alarm-clock 1 15 
+                                                   (λ()
+                                                     ;(displayln "Auto kill working process!" log-output-port)
+                                                     (custodian-shutdown-all current-process)))])
+                          (if file?
+                              (call-with-input-file data
+                                (λ (in)
+                                  (let loop ([dat (read-bytes 1048576 in)])
+                                    (reset-alarm)
+                                    (unless (eof-object? dat)
+                                      (write-bytes dat out)
+                                      (loop (read-bytes 1048576 in))))))
+                              (case representation-type
+                                ((ASCII)
+                                 (print-ascii out data))
+                                ((Image)
+                                 (write-bytes data out))))
+                          (kill-alarm))
+                        ;(flush-output out)
+                        (close-output-port out);ssl required
+                        (print-close))))
+                  ;(displayln "Process complete!" log-output-port)
+                  (custodian-shutdown-all current-process)))))
     
     (define/public (ftp-store-file current-ftp-user new-file-full-path exists-mode)
       (case DTP
@@ -554,24 +557,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
                             (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
                                             (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
-                          (parameterize ([current-custodian current-process])
-                            (let-values ([(in out) (net-connect host port)])
-                              (print-connect)
-                              (when restart-marker
-                                (file-position fout restart-marker)
-                                (set! restart-marker #f))
-                              (let ([reset-alarm (alarm-clock 1 15 
-                                                              (λ()
-                                                                ;(displayln "Auto kill working process!" log-output-port)
-                                                                (custodian-shutdown-all current-process)))])
-                                (let loop ([dat (read-bytes 1048576 in)])
-                                  (reset-alarm)
-                                  (unless (eof-object? dat)
-                                    (write-bytes dat fout)
-                                    (loop (read-bytes 1048576 in)))))
-                              (flush-output fout)
-                              (log-file-event new-file-full-path exists-mode)
-                              (print-close))))
+                          (let-values ([(in out) (net-connect host port)])
+                            (print-connect)
+                            (when restart-marker
+                              (file-position fout restart-marker)
+                              (set! restart-marker #f))
+                            (let-values ([(reset-alarm kill-alarm)
+                                          (alarm-clock 1 15 
+                                                       (λ()
+                                                         ;(displayln "Auto kill working process!" log-output-port)
+                                                         (custodian-shutdown-all current-process)))])
+                              (let loop ([dat (read-bytes 1048576 in)])
+                                (reset-alarm)
+                                (unless (eof-object? dat)
+                                  (write-bytes dat fout)
+                                  (loop (read-bytes 1048576 in))))
+                              (kill-alarm))
+                            (flush-output fout)
+                            (log-file-event new-file-full-path exists-mode)
+                            (print-close)))
                         #:mode 'binary
                         #:exists exists-mode))
                     ;(displayln "Process complete!" log-output-port)
@@ -587,26 +591,27 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
                           (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
                                           (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
-                        (parameterize ([current-custodian current-process])
-                          (let ([listener (net-listen (ftp-host&port-host passive-host&port) 
-                                                      (ftp-host&port-port passive-host&port))])
-                            (let-values ([(in out) (net-accept listener)])
-                              (print-connect)
-                              (when restart-marker
-                                (file-position fout restart-marker)
-                                (set! restart-marker #f))
-                              (let ([reset-alarm (alarm-clock 1 15 
-                                                              (λ()
-                                                                ;(displayln "Auto kill working process!" log-output-port)
-                                                                (custodian-shutdown-all current-process)))])
-                                (let loop ([dat (read-bytes 1048576 in)])
-                                  (reset-alarm)
-                                  (unless (eof-object? dat)
-                                    (write-bytes dat fout)
-                                    (loop (read-bytes 1048576 in)))))
-                              (flush-output fout)
-                              (log-file-event new-file-full-path exists-mode)
-                              (print-close)))))
+                        (let ([listener (net-listen (ftp-host&port-host passive-host&port) 
+                                                    (ftp-host&port-port passive-host&port))])
+                          (let-values ([(in out) (net-accept listener)])
+                            (print-connect)
+                            (when restart-marker
+                              (file-position fout restart-marker)
+                              (set! restart-marker #f))
+                            (let-values ([(reset-alarm kill-alarm)
+                                          (alarm-clock 1 15 
+                                                       (λ()
+                                                         ;(displayln "Auto kill working process!" log-output-port)
+                                                         (custodian-shutdown-all current-process)))])
+                              (let loop ([dat (read-bytes 1048576 in)])
+                                (reset-alarm)
+                                (unless (eof-object? dat)
+                                  (write-bytes dat fout)
+                                  (loop (read-bytes 1048576 in))))
+                              (kill-alarm))
+                            (flush-output fout)
+                            (log-file-event new-file-full-path exists-mode)
+                            (print-close))))
                       #:mode 'binary
                       #:exists exists-mode))
                   ;(displayln "Process complete!" log-output-port)
@@ -739,11 +744,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Private Methods ----------
     ;;
     (define (connect-shutdown time connect-cust)
-      (alarm-clock 1 time 
-                   (λ() 
-                     ;(fprintf log-output-port "[~a] Auto connection close!\n" *client-host*)
-                     ;421 No-transfer-time exceeded. Closing control connection.
-                     (custodian-shutdown-all connect-cust))))
+      (let-values ([(reset kill)
+                    (alarm-clock 1 time 
+                                 (λ() 
+                                   ;(fprintf log-output-port "[~a] Auto connection close!\n" *client-host*)
+                                   ;421 No-transfer-time exceeded. Closing control connection.
+                                   (custodian-shutdown-all connect-cust)))])
+        reset))
     
     (define (accept-client-request [reset-timer void])
       (with-handlers ([any/c #|displayln|# void])
