@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.1.9
+Racket FTP Server Library v1.2.0
 ----------------------------------------------------------------------
 
 Summary:
@@ -71,7 +71,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    
    ftp-users
    
-   bad-auth))
+   bad-auth
+   
+   bad-auth-sleep
+   
+   pass-sleep))
 
 (date-display-format 'iso-8601)
 
@@ -80,6 +84,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ;;
 (define ftp-run-date (srfi/19:current-date))
 (define ftp-date-zone-offset (srfi/19:date-zone-offset ftp-run-date))
+(define pasv-sema (make-semaphore 1))
 
 (define default-server-responses
   (make-hash
@@ -790,6 +795,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (set! *user-logged* #f))
     
     (define (PASS-COMMAND params)
+      (sleep pass-sleep-sec)
       (let ([correct?
              (cond
                ((string? *user-id*)
@@ -807,7 +813,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     ((and (hash-ref bad-auth-table *user-id* #f)
                           ((mcar (hash-ref bad-auth-table *user-id*)). >= . 5)
                           (<= (- (current-seconds) (mcdr (hash-ref bad-auth-table *user-id*)))
-                              60))
+                              bad-auth-sleep-sec))
                      (let ([pair (hash-ref bad-auth-table *user-id*)])
                        (set-mcar! pair (add1 (mcar pair)))
                        (set-mcdr! pair (current-seconds)))
@@ -1561,9 +1567,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                [(p1 p2) (quotient/remainder free-passive-2-port 256)])
                     (set! DTP 'passive)
                     (set! passive-host&port (ftp-host&port passive-2-host free-passive-2-port))
+                    (semaphore-wait pasv-sema)
                     (free-passive-2-port (if (>= free-passive-2-port passive-2-ports-to)
                                              passive-2-ports-from
                                              (add1 free-passive-2-port)))
+                    (semaphore-post pasv-sema)
                     (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2)))
               (print-crlf/encoding** 'BAD-PROTOCOL))))
     
@@ -1673,6 +1681,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define-syntax (kill-current-ftp-process stx)
       #'(custodian-shutdown-all current-process))
+    
+    (define-syntax (bad-auth-sleep-sec stx)
+      #'(ftp-server-params-bad-auth-sleep server-params))
+    
+    (define-syntax (pass-sleep-sec stx)
+      #'(ftp-server-params-pass-sleep server-params))
     
     (define-syntax (free-passive-1-port stx)
       (syntax-case stx ()
@@ -1824,6 +1838,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [max-allow-wait          exact-nonnegative-integer?]
                        [transfer-wait-time      exact-nonnegative-integer?]
                        
+                       [bad-auth-sleep-sec      exact-nonnegative-integer?]
+                       [pass-sleep-sec          exact-nonnegative-integer?]
+                       
                        [passive-1-ports         passive-ports?]
                        [passive-2-ports         passive-ports?]
                        
@@ -1856,6 +1873,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 
                 [max-allow-wait          50]
                 [transfer-wait-time      120]
+                
+                [bad-auth-sleep-sec      60]
+                [pass-sleep-sec          0]
                 
                 [passive-1-ports        (make-passive-ports 40000 40599)]
                 [passive-2-ports        (make-passive-ports 40000 40599)]
@@ -1908,7 +1928,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                default-locale-encoding
                                                log-output-port
                                                server-ftp-users        ;ftp-users
-                                               (make-hash)))           ;bad-auth
+                                               (make-hash)             ;bad-auth
+                                               bad-auth-sleep-sec
+                                               pass-sleep-sec))
         (init-ftp-dirs default-root-dir)
         (parameterize ([current-custodian server-custodian])
           (when (and server-1-host server-1-port)
