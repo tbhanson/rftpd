@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.1.4
+Racket FTP Server v1.1.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -49,7 +49,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version     "Racket FTP Server v1.1.4"]
+    (init-field [server-name&version     "Racket FTP Server v1.1.5"]
                 [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 [ci-help-msg             "Type 'help' or '?' for help."]
                 
@@ -85,17 +85,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [log-file                "logs/ftp.log"]
                 
                 [config-file             "conf/ftp.config"]
-                [users-file              "conf/ftp.users"])
+                [users-file              "conf/ftp.users"]
+                
+                [bad-admin-auth-sleep-sec 120]
+                [max-admin-pass-attempts  5])
     
     (define log-out #f)
     (define server #f)
+    (define bad-admin-auth (cons 0 0)) ; (cons attempts time) 
     ;;
     ;; ---------- Public Methods ----------
     ;;
     (define/public (main)
       (let ([shutdown? #f]
             [start? #f]
-            [stop?  #f]
+            [pause?  #f]
             [restart? #f]
             [cust (make-custodian)])
         (with-handlers ([exn:fail:network? 
@@ -108,12 +112,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (command-line
              #:program "rftpd"
              #:once-any
-             [("-r" "--start")       "Start server"      (set! start? #t)]
-             [("-s" "--stop")        "Stop server"       (set! stop? #t)]
-             [("-t" "--restart")     "Restart server"    (set! restart? #t)]
-             [("-x" "--exit")        "Shutdown server"   (set! shutdown? #t)]
+             [("-r" "--start")       "Start server"     (set! start? #t)]
+             [("-p" "--pause")       "Pause server"     (set! pause? #t)]
+             [("-t" "--restart")     "Restart server"   (set! restart? #t)]
+             [("-x" "--exit")        "Shutdown server"  (set! shutdown? #t)]
              #:once-each
-             [("-i" "--interactive") "Start a RFTPD Remote Control Interface in interactive mode"  
+             [("-i" "--interactive") "Start a RFTPd Remote Control Interface in interactive mode"  
                                      (set! ci-interactive? #t)]
              [("-v" "--version")     "Shows version and copyright" 
                                      (set! show-banner? #t)]
@@ -140,8 +144,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (start?
                      (request "%start")
                      (request "%bye"))
-                    (stop?
-                     (request "%stop")
+                    (pause?
+                     (request "%pause")
                      (request "%bye"))
                     (restart?
                      (request "%restart")
@@ -158,7 +162,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            (case cmd
                              ((help ?)
                               (display-lines '("%start   - start server."
-                                               "%stop    - stop server."
+                                               "%pause   - pause server."
                                                "%restart - restart server."
                                                "%exit    - shutdown server."
                                                "%bye     - close session."))
@@ -216,46 +220,52 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/private (eval-cmd input-port output-port)
       (let ([pass (read-line input-port)])
-        (when (string=? pass control-passwd)
-          (let ([response (λ msg
-                            (apply fprintf output-port msg)
-                            (newline output-port)
-                            (flush-output output-port))])
-            (response "Ok")
-            (let next ([cmd (read input-port)])
-              (cond
-                ((eof-object? cmd))
-                ((eq? cmd '%bye)
-                 (response "Ok"))
-                ((eq? cmd '%exit)
-                 (stop!)
-                 (close-output-port log-out)
-                 (response "Ok")
-                 (exit))
-                ((eq? cmd '%start)
-                 (start!)
-                 (response "Ok")
-                 (next (read input-port)))
-                ((eq? cmd '%stop)
-                 (flush-output log-out)
-                 (stop!)
-                 (response "Ok")
-                 (next (read input-port)))
-                ((eq? cmd '%restart)
-                 (flush-output log-out)
-                 (stop!)
-                 (start!)
-                 (response "Ok")
-                 (next (read input-port)))
-                (else
-                 (response "Command '~a' not implemented.\n" cmd)
-                 (next (read input-port)))))))))
+        (if (and (or ((car bad-admin-auth). < . max-admin-pass-attempts)
+                     (> ((current-seconds). - .(cdr bad-admin-auth))
+                        bad-admin-auth-sleep-sec))
+                 (string=? pass control-passwd))
+            (let ([response (λ msg
+                              (apply fprintf output-port msg)
+                              (newline output-port)
+                              (flush-output output-port))])
+              (set! bad-admin-auth (cons 0 0))
+              (response "Ok")
+              (let next ([cmd (read input-port)])
+                (cond
+                  ((eof-object? cmd))
+                  ((eq? cmd '%bye)
+                   (response "Ok"))
+                  ((eq? cmd '%exit)
+                   (pause!)
+                   (close-output-port log-out)
+                   (response "Ok")
+                   (exit))
+                  ((eq? cmd '%start)
+                   (start!)
+                   (response "Ok")
+                   (next (read input-port)))
+                  ((eq? cmd '%pause)
+                   (flush-output log-out)
+                   (pause!)
+                   (response "Ok")
+                   (next (read input-port)))
+                  ((eq? cmd '%restart)
+                   (flush-output log-out)
+                   (pause!)
+                   (start!)
+                   (response "Ok")
+                   (next (read input-port)))
+                  (else
+                   (response "Command '~a' not implemented.\n" cmd)
+                   (next (read input-port))))))
+            (set! bad-admin-auth (cons (add1 (car bad-admin-auth))
+                                       (current-seconds))))))
     
     (define/private (start!)
       (send server start)
       (when echo? (displayln (format "Server ~a!" (send server status)))))
     
-    (define/private (stop!)
+    (define/private (pause!)
       (send server stop)
       (when echo? (displayln (format "Server ~a!" (send server status)))))
     
