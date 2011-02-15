@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.2.0
+Racket FTP Server Library v1.2.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -31,7 +31,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (file "lib-ssl.rkt")
          srfi/48)
 
-(provide ftp-server% 
+(provide ftp-server%
          and/exc
          IPv4?
          IPv6?
@@ -45,7 +45,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (struct passive-ports (from to [free #:mutable]))
 (struct ftp-mlst-features (size? modify? perm?) #:mutable)
 
-(struct ftp-server-params 
+(struct ftp-server-params
   (passive-1-ports
    passive-2-ports
    
@@ -108,21 +108,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (RU . "230 Пользователь ~a успешно прошел идентификацию."))
      (SERVICE-READY (EN . "220 Service ready for new user.")
                     (RU . "220 Служба подготовлена для следующей авторизации."))
-     (QUIT (EN . "221 Goodbye.") 
+     (QUIT (EN . "221 Goodbye.")
            (RU . "221 До свидания."))
-     (ABORT (EN . "226 Abort successful.") 
+     (ABORT (EN . "226 Abort successful.")
             (RU . "226 Текущая операция прервана."))
-     (SYSTEM (EN . "215 UNIX (Unix-like)") 
+     (SYSTEM (EN . "215 UNIX (Unix-like)")
              (RU. "215 UNIX (Unix-подобная)"))
      (CURRENT-DIR (EN . "257 ~s is current directory.")
                   (RU . "257 ~s - текущий каталог."))
      (CMD-SUCCESSFUL (EN . "~a ~a command successful.")
                      (RU . "~a Команда ~a выполнена."))
-     (END (EN . "~a End") 
+     (END (EN . "~a End")
           (RU . "~a Конец"))
-     (FEAT-LIST (EN . "211-Extensions supported:") 
+     (FEAT-LIST (EN . "211-Extensions supported:")
                 (RU . "211-Поддерживаемые расширения:"))
-     (RESTART (EN . "350 Restart marker accepted.") 
+     (RESTART (EN . "350 Restart marker accepted.")
               (RU . "350 Рестарт-маркер установлен."))
      (STATUS-LIST (EN . "213-Status of ~s:")
                   (RU . "213-Статус ~s:"))
@@ -227,9 +227,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (and (or (and (regexp-match #rx"::" ip)
                            ((length l) . <= . 8))
                       ((length l) . = . 8))
-                  (andmap (λ(s) 
-                            (if (string=? s "") 
-                                #t 
+                  (andmap (λ(s)
+                            (if (string=? s "")
+                                #t
                                 ((string->number s 16). <= . #xFFFF)))
                           l)))))
 
@@ -427,7 +427,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (set! list-string->bytes/locale-encoding (λ (str) (string->bytes/utf-8 str))))
           (begin
             (set! print/locale-encoding (λ (output-port text) (print/encoding locale-encoding output-port text)))
-            (set! request-bytes->string/locale-encoding (λ (bstr) 
+            (set! request-bytes->string/locale-encoding (λ (bstr)
                                                           (request-bytes->string/encoding locale-encoding bstr)))
             (set! list-string->bytes/locale-encoding (λ (str) (list-string->bytes/encoding locale-encoding str))))))
     
@@ -484,7 +484,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       (let-values ([(in out) (net-connect host port)])
                         (print-connect)
                         (let-values ([(reset-alarm kill-alarm)
-                                      (alarm-clock 1 15 
+                                      (alarm-clock 1 15
                                                    (λ()
                                                      ;(displayln "Auto kill working process!" log-output-port)
                                                      (custodian-shutdown-all current-process)))])
@@ -510,16 +510,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (custodian-shutdown-all current-process))))))
     
     (define (passive-data-transfer data file?)
-      (set! current-process (make-custodian))  
+      (set! current-process (make-custodian))
       (parameterize ([current-custodian current-process])
         (thread (λ ()
                   (with-handlers ([any/c (λ (e) (print-abort))])
-                    (let ([listener (net-listen (ftp-host&port-host passive-host&port) 
+                    (let ([listener (net-listen (ftp-host&port-host passive-host&port)
                                                 (ftp-host&port-port passive-host&port))])
                       (let-values ([(in out) (net-accept listener)])
                         (print-connect)
                         (let-values ([(reset-alarm kill-alarm)
-                                      (alarm-clock 1 15 
+                                      (alarm-clock 1 15
                                                    (λ()
                                                      ;(displayln "Auto kill working process!" log-output-port)
                                                      (custodian-shutdown-all current-process)))])
@@ -568,7 +568,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (file-position fout restart-marker)
                               (set! restart-marker #f))
                             (let-values ([(reset-alarm kill-alarm)
-                                          (alarm-clock 1 15 
+                                          (alarm-clock 1 15
                                                        (λ()
                                                          ;(displayln "Auto kill working process!" log-output-port)
                                                          (custodian-shutdown-all current-process)))])
@@ -596,7 +596,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
                           (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
                                           (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
-                        (let ([listener (net-listen (ftp-host&port-host passive-host&port) 
+                        (let ([listener (net-listen (ftp-host&port-host passive-host&port)
                                                     (ftp-host&port-port passive-host&port))])
                           (let-values ([(in out) (net-accept listener)])
                             (print-connect)
@@ -604,7 +604,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (file-position fout restart-marker)
                               (set! restart-marker #f))
                             (let-values ([(reset-alarm kill-alarm)
-                                          (alarm-clock 1 15 
+                                          (alarm-clock 1 15
                                                        (λ()
                                                          ;(displayln "Auto kill working process!" log-output-port)
                                                          (custodian-shutdown-all current-process)))])
@@ -668,7 +668,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (init-field server-params
                 welcome-message
                 [ssl-server-context #f]
-                [ssl-client-context #f])
+                [ssl-client-context #f]
+                [disable-commands null])
     ;;
     ;; ---------- Private Definitions ----------
     ;;
@@ -690,7 +691,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define net-accept (if ssl-server-context ssl-accept tcp-accept))
     (define net-addresses (if ssl-server-context ssl-addresses tcp-addresses))
-    (define net-connect (if ssl-client-context 
+    (define net-connect (if ssl-client-context
                             (λ(host port)
                               (ssl-connect host port ssl-client-context))
                             tcp-connect))
@@ -718,8 +719,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                [print-connect (λ() (print-crlf/encoding** 'OPEN-DATA-CONNECTION representation-type))]
                [print-close (λ() (print-crlf/encoding** 'TRANSFER-OK))]
                [print-ascii print/locale-encoding]
-               [log-file-event (λ(new-file-full-path exists-mode) 
-                                 (print-log-event 
+               [log-file-event (λ(new-file-full-path exists-mode)
+                                 (print-log-event
                                   (format "~a data to file ~a"
                                           (if (eq? exists-mode 'append) "Append" "Store")
                                           (real-path->ftp-path new-file-full-path *root-dir*))))]
@@ -736,11 +737,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (set!-values (*client-input-port* *client-output-port*) (net-accept listener))
             (let-values ([(server-host client-host) (net-addresses *client-input-port*)])
               (set! *client-host* client-host)
-              (set! *current-server* (if (and server-1-host 
+              (set! *current-server* (if (and server-1-host
                                               (string-ci=? server-host server-1-host))
                                          1 2))
               (set! *current-protocol* (if (IPv4? server-host) '|1| '|2|))
-              (thread (λ () 
+              (thread (λ ()
                         ;(fprintf log-output-port "[~a] Accept connection!\n" client-host)
                         (accept-client-request (connect-shutdown transfer-wait-time cust))
                         ;(fprintf log-output-port "[~a] Connection close!\n" client-host)
@@ -750,8 +751,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     (define (connect-shutdown time connect-cust)
       (let-values ([(reset kill)
-                    (alarm-clock 1 time 
-                                 (λ() 
+                    (alarm-clock 1 time
+                                 (λ()
                                    ;(fprintf log-output-port "[~a] Auto connection close!\n" *client-host*)
                                    ;421 No-transfer-time exceeded. Closing control connection.
                                    (custodian-shutdown-all connect-cust)))])
@@ -899,11 +900,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (begin
             (print-crlf/encoding** 'FEAT-LIST)
             (print-crlf/encoding* " CLNT")
-            (print-crlf/encoding* (string-append 
+            (print-crlf/encoding* (string-append
                                    " LANG "
-                                   (string-join (map (λ(l) 
-                                                       (string-append (symbol->string l) 
-                                                                      (if (eq? l *current-lang*) "*" ""))) 
+                                   (string-join (map (λ(l)
+                                                       (string-append (symbol->string l)
+                                                                      (if (eq? l *current-lang*) "*" "")))
                                                      *lang-list*)
                                                 ";")))
             (print-crlf/encoding* " EPRT")
@@ -1690,13 +1691,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define-syntax (free-passive-1-port stx)
       (syntax-case stx ()
-        [(_ expr) 
+        [(_ expr)
          #'(set-passive-ports-free! (ftp-server-params-passive-1-ports server-params) expr)]
         [_ #'(passive-ports-free (ftp-server-params-passive-1-ports server-params))]))
     
     (define-syntax (free-passive-2-port stx)
       (syntax-case stx ()
-        [(_ expr) 
+        [(_ expr)
          #'(set-passive-ports-free! (ftp-server-params-passive-2-ports server-params) expr)]
         [_ #'(passive-ports-free (ftp-server-params-passive-2-ports server-params))]))
     
@@ -1763,55 +1764,57 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (init)
       (set! *cmd-list*
-            `(("ABOR" ,ABOR-COMMAND . "ABOR")
-              ("ALLO" ,ALLO-COMMAND . "ALLO <SP> <decimal-integer>")
-              ("APPE" ,(λ (params) (STORE-FILE params 'append)) . "APPE <SP> <pathname>")
-              ("CDUP" ,CDUP-COMMAND . "CDUP")
-              ("CLNT" ,CLNT-COMMAND . "CLNT <SP> <client-name>")
-              ("CWD"  ,CWD-COMMAND . "CWD <SP> <pathname>")
-              ("DELE" ,DELE-COMMAND . "DELE <SP> <pathname>")
-              ("EPRT" ,EPRT-COMMAND . "EPRT <SP> <d> <address-family> <d> <ip-addr> <d> <port> <d>")
-              ("EPSV" ,EPSV-COMMAND . "EPSV [<SP> (<address-family> | ALL)]")
-              ("FEAT" ,FEAT-COMMAND . "FEAT")
-              ("HELP" ,HELP-COMMAND . "HELP [<SP> <string>]")
-              ("LANG" ,LANG-COMMAND . "LANG <SP> <lang-tag>")
-              ("LIST" ,(λ (params) (DIR-LIST params)) . "LIST [<SP> <pathname>]")
-              ("MDTM" ,MDTM-COMMAND . "MDTM <SP> <pathname>")
-              ("MKD"  ,MKD-COMMAND . "MKD <SP> <pathname>")
-              ("MLSD" ,MLSD-COMMAND . "MLSD [<SP> <pathname>]")
-              ("MLST" ,MLST-COMMAND . "MLST [<SP> <pathname>]")
-              ("MODE" ,MODE-COMMAND . "MODE <SP> <mode-code>")
-              ("NLST" ,(λ (params) (DIR-LIST params #t)) . "NLST [<SP> <pathname>]")
-              ("NOOP" ,NOOP-COMMAND . "NOOP")
-              ("OPTS" ,OPTS-COMMAND . "OPTS <SP> <command-name> [<SP> <command-options>]")
-              ("PASS" ,PASS-COMMAND . "PASS <SP> <password>")
-              ("PASV" ,PASV-COMMAND . "PASV")
-              ("PBSZ" ,PBSZ-COMMAND . "PBSZ <SP> <num>") ; error!
-              ("PORT" ,PORT-COMMAND . "PORT <SP> <host-port>")
-              ("PROT" ,PROT-COMMAND . "PROT <SP> <code>") ; error!
-              ("PWD"  ,PWD-COMMAND . "PWD")
-              ("QUIT" ,QUIT-COMMAND . "QUIT")
-              ("REIN" ,REIN-COMMAND . "REIN")
-              ("REST" ,REST-COMMAND . "REST <SP> <marker>")
-              ("RETR" ,RETR-COMMAND . "RETR <SP> <pathname>")
-              ("RMD"  ,RMD-COMMAND . "RMD <SP> <pathname>")
-              ("RNFR" ,RNFR-COMMAND . "RNFR <SP> <pathname>")
-              ("RNTO" ,RNTO-COMMAND . "RNTO <SP> <pathname>")
-              ("SITE" ,SITE-COMMAND . "SITE <SP> <string>")
-              ("SIZE" ,SIZE-COMMAND . "SIZE <SP> <pathname>")
-              ("STAT" ,STAT-COMMAND . "STAT [<SP> <pathname>]")
-              ("STOR" ,STORE-FILE . "STOR <SP> <pathname>")
-              ("STOU" ,STOU-FILE . "STOU")
-              ("STRU" ,STRU-COMMAND . "STRU <SP> <structure-code>")
-              ("SYST" ,SYST-COMMAND . "SYST")
-              ("TYPE" ,TYPE-COMMAND . "TYPE <SP> <type-code>")
-              ("USER" ,USER-COMMAND . "USER <SP> <username>")
-              ("XCUP" ,CDUP-COMMAND . "XCUP")
-              ("XCWD" ,CWD-COMMAND . "XCWD <SP> <pathname>")
-              ("XMKD" ,MKD-COMMAND . "XMKD <SP> <pathname>")
-              ("XPWD" ,PWD-COMMAND . "XPWD")
-              ("XRMD" ,RMD-COMMAND . "XRMD <SP> <pathname>")))
-      
+            (remove*
+             (map symbol->string disable-commands)
+             `(("ABOR" ,ABOR-COMMAND . "ABOR")
+               ("ALLO" ,ALLO-COMMAND . "ALLO <SP> <decimal-integer>")
+               ("APPE" ,(λ (params) (STORE-FILE params 'append)) . "APPE <SP> <pathname>")
+               ("CDUP" ,CDUP-COMMAND . "CDUP")
+               ("CLNT" ,CLNT-COMMAND . "CLNT <SP> <client-name>")
+               ("CWD"  ,CWD-COMMAND . "CWD <SP> <pathname>")
+               ("DELE" ,DELE-COMMAND . "DELE <SP> <pathname>")
+               ("EPRT" ,EPRT-COMMAND . "EPRT <SP> <d> <address-family> <d> <ip-addr> <d> <port> <d>")
+               ("EPSV" ,EPSV-COMMAND . "EPSV [<SP> (<address-family> | ALL)]")
+               ("FEAT" ,FEAT-COMMAND . "FEAT")
+               ("HELP" ,HELP-COMMAND . "HELP [<SP> <string>]")
+               ("LANG" ,LANG-COMMAND . "LANG <SP> <lang-tag>")
+               ("LIST" ,(λ (params) (DIR-LIST params)) . "LIST [<SP> <pathname>]")
+               ("MDTM" ,MDTM-COMMAND . "MDTM <SP> <pathname>")
+               ("MKD"  ,MKD-COMMAND . "MKD <SP> <pathname>")
+               ("MLSD" ,MLSD-COMMAND . "MLSD [<SP> <pathname>]")
+               ("MLST" ,MLST-COMMAND . "MLST [<SP> <pathname>]")
+               ("MODE" ,MODE-COMMAND . "MODE <SP> <mode-code>")
+               ("NLST" ,(λ (params) (DIR-LIST params #t)) . "NLST [<SP> <pathname>]")
+               ("NOOP" ,NOOP-COMMAND . "NOOP")
+               ("OPTS" ,OPTS-COMMAND . "OPTS <SP> <command-name> [<SP> <command-options>]")
+               ("PASS" ,PASS-COMMAND . "PASS <SP> <password>")
+               ("PASV" ,PASV-COMMAND . "PASV")
+               ("PBSZ" ,PBSZ-COMMAND . "PBSZ <SP> <num>") ; error!
+               ("PORT" ,PORT-COMMAND . "PORT <SP> <host-port>")
+               ("PROT" ,PROT-COMMAND . "PROT <SP> <code>") ; error!
+               ("PWD"  ,PWD-COMMAND . "PWD")
+               ("QUIT" ,QUIT-COMMAND . "QUIT")
+               ("REIN" ,REIN-COMMAND . "REIN")
+               ("REST" ,REST-COMMAND . "REST <SP> <marker>")
+               ("RETR" ,RETR-COMMAND . "RETR <SP> <pathname>")
+               ("RMD"  ,RMD-COMMAND . "RMD <SP> <pathname>")
+               ("RNFR" ,RNFR-COMMAND . "RNFR <SP> <pathname>")
+               ("RNTO" ,RNTO-COMMAND . "RNTO <SP> <pathname>")
+               ("SITE" ,SITE-COMMAND . "SITE <SP> <string>")
+               ("SIZE" ,SIZE-COMMAND . "SIZE <SP> <pathname>")
+               ("STAT" ,STAT-COMMAND . "STAT [<SP> <pathname>]")
+               ("STOR" ,STORE-FILE . "STOR <SP> <pathname>")
+               ("STOU" ,STOU-FILE . "STOU")
+               ("STRU" ,STRU-COMMAND . "STRU <SP> <structure-code>")
+               ("SYST" ,SYST-COMMAND . "SYST")
+               ("TYPE" ,TYPE-COMMAND . "TYPE <SP> <type-code>")
+               ("USER" ,USER-COMMAND . "USER <SP> <username>")
+               ("XCUP" ,CDUP-COMMAND . "XCUP")
+               ("XCWD" ,CWD-COMMAND . "XCWD <SP> <pathname>")
+               ("XMKD" ,MKD-COMMAND . "XMKD <SP> <pathname>")
+               ("XPWD" ,PWD-COMMAND . "XPWD")
+               ("XRMD" ,RMD-COMMAND . "XRMD <SP> <pathname>"))
+             string-ci=?))
       (set! *cmd-voc* (make-hash *cmd-list*))
       (release-encoding-proc *locale-encoding*))
     
@@ -1841,14 +1844,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [bad-auth-sleep-sec      exact-nonnegative-integer?]
                        [pass-sleep-sec          exact-nonnegative-integer?]
                        
+                       [disable-ftp-commands    (listof symbol?)]
+                       
                        [passive-1-ports         passive-ports?]
                        [passive-2-ports         passive-ports?]
                        
                        [default-root-dir        not-null-string/c]
                        [default-locale-encoding string?]
                        [log-output-port         output-port?])
-           [add-ftp-user (string? 
-                          not-null-string/c string? 
+           [add-ftp-user (string?
+                          not-null-string/c string?
                           not-null-string/c (non-empty-listof not-null-string/c) not-null-string/c . ->m . void?)])
   
   (class (ftp-utils% (ftp-vfs% object%))
@@ -1877,8 +1882,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [bad-auth-sleep-sec      60]
                 [pass-sleep-sec          0]
                 
-                [passive-1-ports        (make-passive-ports 40000 40599)]
-                [passive-2-ports        (make-passive-ports 40000 40599)]
+                [disable-ftp-commands    null]
+                
+                [passive-1-ports         (make-passive-ports 40000 40599)]
+                [passive-2-ports         (make-passive-ports 40000 40599)]
                 
                 [default-root-dir        "ftp-dir"]
                 [default-locale-encoding "UTF-8"]
@@ -1934,13 +1941,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (init-ftp-dirs default-root-dir)
         (parameterize ([current-custodian server-custodian])
           (when (and server-1-host server-1-port)
-            (let* ([ssl-server-ctx 
+            (let* ([ssl-server-ctx
                     (and/exc server-1-encryption server-1-certificate
                              (let ([ctx (ssl-make-server-context server-1-encryption)])
                                (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
                                (ssl-load-private-key! ctx server-1-certificate #t #f default-locale-encoding)
                                ctx))]
-                   [ssl-client-ctx 
+                   [ssl-client-ctx
                     (and/exc server-1-encryption server-1-certificate
                              (let ([ctx (ssl-make-client-context server-1-encryption)])
                                (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
@@ -1950,22 +1957,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                  (ssl-listen server-1-port (random 123456789) #t server-1-host ssl-server-ctx)
                                  (tcp-listen server-1-port max-allow-wait #t server-1-host))])
               (letrec ([main-loop (λ ()
-                                    (send (new ftp-session% 
+                                    (send (new ftp-session%
                                                [server-params server-params]
                                                [ssl-server-context ssl-server-ctx]
                                                [ssl-client-context ssl-client-ctx]
+                                               [disable-commands disable-ftp-commands]
                                                [welcome-message welcome-message])
                                           handle-client-request listener transfer-wait-time)
                                     (main-loop))])
                 (set! server-1-thread (thread main-loop)))))
           (when (and server-2-host server-2-port)
-            (let* ([ssl-server-ctx 
+            (let* ([ssl-server-ctx
                     (and/exc server-2-encryption server-2-certificate
                              (let ([ctx (ssl-make-server-context server-2-encryption)])
                                (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
                                (ssl-load-private-key! ctx server-2-certificate #t #f default-locale-encoding)
                                ctx))]
-                   [ssl-client-ctx 
+                   [ssl-client-ctx
                     (and/exc server-2-encryption server-2-certificate
                              (let ([ctx (ssl-make-client-context server-2-encryption)])
                                (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
@@ -1975,10 +1983,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                  (ssl-listen server-2-port (random 123456789) #t server-2-host ssl-server-ctx)
                                  (tcp-listen server-2-port max-allow-wait #t server-2-host))])
               (letrec ([main-loop (λ ()
-                                    (send (new ftp-session% 
+                                    (send (new ftp-session%
                                                [server-params server-params]
                                                [ssl-server-context ssl-server-ctx]
                                                [ssl-client-context ssl-client-ctx]
+                                               [disable-commands disable-ftp-commands]
                                                [welcome-message welcome-message])
                                           handle-client-request listener transfer-wait-time)
                                     (main-loop))])
@@ -2006,7 +2015,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;      (syntax-case stx ()
     ;        [(_ expr) #'(set-ftp-server-params-passive-1-listeners! server-params expr)]
     ;        [_ #'(ftp-server-params-passive-1-listeners server-params)]))
-    ;    
+    ;
     ;    (define-syntax (passive-2-listeners stx)
     ;      (syntax-case stx ()
     ;        [(_ expr) #'(set-ftp-server-params-passive-2-listeners! server-params expr)]
