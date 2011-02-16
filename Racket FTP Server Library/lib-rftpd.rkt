@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.2.1
+Racket FTP Server Library v1.2.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -389,60 +389,43 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (mixin () ()
     (super-new)
     
-    (field [print/locale-encoding #f]
-           [request-bytes->string/locale-encoding #f]
-           [list-string->bytes/locale-encoding #f])
+    (init-field [default-encoding "UTF-8"])
     
-    (define/public (print/encoding encoding out text)
-      (let ([conv (bytes-open-converter "UTF-8" encoding)])
-        (let-values ([(bstr len result) (bytes-convert conv (string->bytes/utf-8 text))])
-          (bytes-close-converter conv)
-          (write-bytes bstr out))))
+    (define/public (bytes->bytes/encoding encoding bstr)
+      (let*-values ([(conv) (bytes-open-converter encoding "UTF-8")]
+                    [(result len status) (bytes-convert conv bstr)])
+        (bytes-close-converter conv)
+        (unless (eq? status 'complete)
+          (set! conv (bytes-open-converter default-encoding "UTF-8"))
+          (set!-values (result len status) (bytes-convert conv bstr))
+          (bytes-close-converter conv))
+        result))
     
-    (define/public (request-bytes->string/encoding encoding bstr)
-      (let ([conv (bytes-open-converter encoding "UTF-8")])
-        (let-values ([(bstr len result) (bytes-convert conv bstr)])
-          (bytes-close-converter conv)
-          (bytes->string/utf-8 bstr))))
+    (define/public (bytes->string/encoding encoding bstr)
+      (bytes->string/utf-8 (bytes->bytes/encoding encoding bstr)))
     
-    (define/public (list-string->bytes/encoding encoding str)
-      (let ([conv (bytes-open-converter "UTF-8" encoding)])
-        (let-values ([(bstr len result) (bytes-convert conv (string->bytes/utf-8 str))])
-          (bytes-close-converter conv)
-          bstr)))
+    (define/public (string->bytes/encoding encoding str)
+      (bytes->bytes/encoding encoding (string->bytes/utf-8 str)))
     
-    (define/public (read-request input-port)
+    (define/public (print/encoding encoding str out)
+      (write-bytes (string->bytes/encoding encoding str) out))
+    
+    (define/public (read-request encoding input-port)
       (and (byte-ready? input-port)
            (let ([line (read-bytes-line input-port)])
              (if (eof-object? line)
                  line
-                 (let ([s (request-bytes->string/locale-encoding line)])
+                 (let ([s (bytes->string/encoding encoding line)])
                    (substring s 0 (sub1 (string-length s))))))))
     
-    (define/public (release-encoding-proc locale-encoding)
-      (if (string=? locale-encoding "UTF-8")
-          (begin
-            (set! print/locale-encoding (λ (output-port text) (display text output-port)))
-            (set! request-bytes->string/locale-encoding (λ (bstr) (bytes->string/utf-8 bstr)))
-            (set! list-string->bytes/locale-encoding (λ (str) (string->bytes/utf-8 str))))
-          (begin
-            (set! print/locale-encoding (λ (output-port text) (print/encoding locale-encoding output-port text)))
-            (set! request-bytes->string/locale-encoding (λ (bstr)
-                                                          (request-bytes->string/encoding locale-encoding bstr)))
-            (set! list-string->bytes/locale-encoding (λ (str) (list-string->bytes/encoding locale-encoding str))))))
-    
-    (define/public (print-crlf/encoding text out)
-      (print/locale-encoding out text)
+    (define/public (print-crlf/encoding encoding str out)
+      (print/encoding encoding str out)
       (write-bytes #"\r\n" out)
       (flush-output out))
     
-    (define/public (print*-crlf/encoding out current-lang server-responses response-tag . args)
+    (define/public (print*-crlf/encoding encoding out current-lang server-responses response-tag . args)
       (let ([response (cdr (assq current-lang (hash-ref server-responses response-tag)))])
-        (if (null? args)
-            (print/locale-encoding out response)
-            (print/locale-encoding out (apply format response args))))
-      (write-bytes #"\r\n" out)
-      (flush-output out))))
+        (print-crlf/encoding encoding (if (null? args) response (apply format response args)) out)))))
 
 (define ftp-DTP%
   (class (ftp-vfs% object%)
@@ -461,7 +444,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [print-abort (λ() #f)]
                 [print-connect (λ() #f)]
                 [print-close (λ() #f)]
-                [print-ascii (λ(out data) #f)]
+                [print-ascii (λ(data out) #f)]
                 [log-file-event (λ(new-file-full-path exists-mode) #f)]
                 [net-connect (λ(host port) #f)]
                 [net-accept (λ(listener) #f)]
@@ -498,7 +481,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                       (loop (read-bytes 1048576 in))))))
                               (case representation-type
                                 ((ASCII)
-                                 (print-ascii out data))
+                                 (print-ascii data out))
                                 ((Image)
                                  (write-bytes data out))))
                           (kill-alarm))
@@ -533,7 +516,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                       (loop (read-bytes 1048576 in))))))
                               (case representation-type
                                 ((ASCII)
-                                 (print-ascii out data))
+                                 (print-ascii data out))
                                 ((Image)
                                  (write-bytes data out))))
                           (kill-alarm))
@@ -628,9 +611,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              print/encoding
              print-crlf/encoding
              print*-crlf/encoding
-             release-encoding-proc
-             list-string->bytes/encoding
-             request-bytes->string/encoding
+             string->bytes/encoding
              read-request
              real-path->ftp-path
              ftp-file-or-dir-full-info
@@ -650,11 +631,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              ftp-data-transfer
              ftp-store-file)
     
-    (inherit-field print/locale-encoding
-                   request-bytes->string/locale-encoding
-                   list-string->bytes/locale-encoding
-                   
-                   current-process
+    (inherit-field current-process
                    active-host&port
                    passive-host&port
                    restart-marker
@@ -707,7 +684,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Superclass Initialization ----------
     ;;
-    (super-new [current-process (make-custodian)]
+    (super-new [default-encoding default-locale-encoding]
+               [current-process (make-custodian)]
                [active-host&port (ftp-host&port "127.0.0.1" 20)]
                [passive-host&port (ftp-host&port passive-1-host free-passive-1-port)]
                [restart-marker #f]
@@ -718,7 +696,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                [print-abort (λ() (print-crlf/encoding** 'TRANSFER-ABORTED))]
                [print-connect (λ() (print-crlf/encoding** 'OPEN-DATA-CONNECTION representation-type))]
                [print-close (λ() (print-crlf/encoding** 'TRANSFER-OK))]
-               [print-ascii print/locale-encoding]
+               [print-ascii (λ(data out) (print/encoding *locale-encoding* data out))]
                [log-file-event (λ(new-file-full-path exists-mode)
                                  (print-log-event
                                   (format "~a data to file ~a"
@@ -759,10 +737,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         reset))
     
     (define (accept-client-request [reset-timer void])
-      (with-handlers ([any/c #|displayln|# void])
+      (with-handlers ([any/c  #|displayln|# void])
         (print-crlf/encoding** 'WELCOME welcome-message)
         ;(sleep 1)
-        (let loop ([request (read-request *client-input-port*)])
+        (let loop ([request (read-request *locale-encoding* *client-input-port*)])
           (unless (eof-object? request)
             (when request
               ;(printf "[~a] ~a\n" *client-host* request)
@@ -780,7 +758,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       (else (print-crlf/encoding** 'PLEASE-LOGIN))))))
             (reset-timer)
             (sleep .005)
-            (loop (read-request *client-input-port*))))))
+            (loop (read-request *locale-encoding* *client-input-port*))))))
     
     (define (USER-COMMAND params)
       (if params
@@ -1046,7 +1024,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (print-crlf/encoding* dirlist)
                  (ftp-data-transfer (case representation-type
                                       ((ASCII) dirlist)
-                                      ((Image) (list-string->bytes/locale-encoding dirlist)))))))]
+                                      ((Image) (string->bytes/encoding *locale-encoding* dirlist)))))))]
         
         (let ([dir (if (and params (eq? (string-ref params 0) #\-))
                        (let ([d (regexp-match #px"[^-\\w][^ \t-]+.*" params)])
@@ -1405,7 +1383,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                       (directory-list path)))])
                   (ftp-data-transfer (case representation-type
                                        ((ASCII) dirlist)
-                                       ((Image) (list-string->bytes/locale-encoding dirlist))))))]
+                                       ((Image) (string->bytes/encoding *locale-encoding* dirlist))))))]
         (cond
           ((not params)
            (mlsd *current-dir*))
@@ -1436,8 +1414,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (print-crlf/encoding** 'UTF8-OFF))
                        (else
                         (print-crlf/encoding** 'SYNTAX-ERROR "UTF8:")))
-                     (print-crlf/encoding** 'SYNTAX-ERROR "UTF8:"))
-                 (release-encoding-proc *locale-encoding*)))
+                     (print-crlf/encoding** 'SYNTAX-ERROR "UTF8:"))))
               ((MLST)
                (let ([modes (regexp-match #rx"[^ \t]+.+" (substring params 4))])
                  (if modes
@@ -1702,10 +1679,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         [_ #'(passive-ports-free (ftp-server-params-passive-2-ports server-params))]))
     
     (define-syntax-rule (print-crlf/encoding* txt)
-      (print-crlf/encoding txt *client-output-port*))
+      (print-crlf/encoding *locale-encoding* txt *client-output-port*))
     
     (define-syntax-rule (print-crlf/encoding** tag ...)
-      (print*-crlf/encoding *client-output-port* *current-lang* server-responses tag ...))
+      (print*-crlf/encoding *locale-encoding* *client-output-port* *current-lang* server-responses tag ...))
     
     (define-syntax-rule (print-log-event msg ...)
       (short-print-log-event log-output-port *client-host* *user-id* msg ...))
@@ -1815,8 +1792,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                ("XPWD" ,PWD-COMMAND . "XPWD")
                ("XRMD" ,RMD-COMMAND . "XRMD <SP> <pathname>"))
              string-ci=?))
-      (set! *cmd-voc* (make-hash *cmd-list*))
-      (release-encoding-proc *locale-encoding*))
+      (set! *cmd-voc* (make-hash *cmd-list*)))
     
     (init)))
 
