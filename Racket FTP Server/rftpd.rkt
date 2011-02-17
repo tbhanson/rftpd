@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.1.5
+Racket FTP Server v1.1.6
 ----------------------------------------------------------------------
 
 Summary:
@@ -49,7 +49,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version     "Racket FTP Server v1.1.5"]
+    (init-field [server-name&version     "Racket FTP Server v1.1.6 <development>"]
                 [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 [ci-help-msg             "Type 'help' or '?' for help."]
                 
@@ -112,17 +112,32 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (command-line
              #:program "rftpd"
              #:once-any
-             [("-r" "--start")       "Start server"     (set! start? #t)]
-             [("-p" "--pause")       "Pause server"     (set! pause? #t)]
-             [("-t" "--restart")     "Restart server"   (set! restart? #t)]
-             [("-x" "--exit")        "Shutdown server"  (set! shutdown? #t)]
+             [("-r" "--start")
+              "Start server"
+              (set! start? #t)]
+             [("-p" "--pause")
+              "Pause server"
+              (set! pause? #t)]
+             [("-t" "--restart")
+              "Restart server"
+              (set! restart? #t)]
+             [("-s" "--stop" "-x" "--exit")
+              "Shutdown server"  
+              (set! shutdown? #t)]
              #:once-each
-             [("-i" "--interactive") "Start a RFTPd Remote Control Interface in interactive mode"  
-                                     (set! ci-interactive? #t)]
-             [("-v" "--version")     "Shows version and copyright" 
-                                     (set! show-banner? #t)]
-             [("-e" "--echo")        "Show echo"
-                                     (set! echo? #t)]))
+             [("-i" "--interactive")
+              "Start a RFTPd Remote Control Interface in interactive mode"  
+              (set! ci-interactive? #t)]
+             [("-v" "--version")
+              "Shows version and copyright" 
+              (set! show-banner? #t)]
+             [("-e" "--echo")
+              "Show echo"
+              (set! echo? #t)]
+             ["--path"
+              path
+              ("Change current directory" "Syntax: --path \"path\"")
+              (current-directory path)]))
           (unless (or show-banner? echo? ci-interactive?) 
             (HideConsole))
           (when show-banner?
