@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.1.6
+Racket FTP Server v1.1.8
 ----------------------------------------------------------------------
 
 Summary:
@@ -30,6 +30,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (file "lib-ssl.rkt")
          (prefix-in ftp: (file "lib-rftpd.rkt")))
 
+(define-for-syntax DrRacket-DEBUG? #t)
+
+(define-syntax (if-drdebug so)
+  (syntax-case so ()
+    [(_ exp1 exp2)
+     (if DrRacket-DEBUG? #'exp1 #'exp2)]))
+
 (define-values (ShowConsole HideConsole)
   (case (system-type) 
     [(windows)
@@ -45,11 +52,28 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     [else
      (values void void)]))
 
+(define run-dir-path (path-only (find-system-path 'run-file)))
+
+(define (build-rtm-path path)
+  (if-drdebug 
+   path
+   (if (or (eq? (string-ref path 0) #\/)
+           (not run-dir-path))
+       path
+       (build-path run-dir-path path))))
+
+(define-syntax (os-build-rtm-path so)
+  (syntax-case so ()
+    [(_ path)
+     (if (eq? (system-type) 'windows)
+         #'path
+         #'(build-rtm-path (build-path "../" path)))]))
+
 (define racket-ftp-server%
   (class object%
     (super-new)
     
-    (init-field [server-name&version     "Racket FTP Server v1.1.6 <development>"]
+    (init-field [server-name&version     "Racket FTP Server v1.1.8 <development>"]
                 [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 [ci-help-msg             "Type 'help' or '?' for help."]
                 
@@ -61,34 +85,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [server-1-host           "127.0.0.1"]
                 [server-1-port           21]
                 [server-1-encryption     #f]
-                [server-1-certificate    "certs/server-1.pem"]
+                [server-1-certificate    (os-build-rtm-path "certs/server-1.pem")]
                 
                 [server-2-host           #f]
                 [server-2-port           21]
                 [server-2-encryption     #f]
-                [server-2-certificate    "certs/server-2.pem"]
+                [server-2-certificate    (os-build-rtm-path "certs/server-2.pem")]
                 
-                [server-max-allow-wait   50]
+                [server-max-allow-wait   25]
                 
-                [passive-1-ports         (ftp:make-passive-ports 40000 40599)]
-                [passive-2-ports         (ftp:make-passive-ports 40000 40599)]
+                [passive-1-ports         (ftp:make-passive-ports 40000 40199)]
+                [passive-2-ports         (ftp:make-passive-ports 40000 40199)]
                 
                 [control-passwd          "12345"]
                 [control-host            "127.0.0.1"]
-                [control-port            40600]
+                [control-port            40200]
                 [control-encryption      'sslv3]
-                [control-certificate     "certs/control.pem"]
+                [control-certificate     (os-build-rtm-path "certs/control.pem")]
                 
                 [default-locale-encoding "UTF-8"]
                 [default-root-dir        "ftp-dir"]
                 
-                [log-file                "logs/ftp.log"]
+                [log-file                (os-build-rtm-path "logs/rftpd.log")]
                 
-                [config-file             "conf/ftp.config"]
-                [users-file              "conf/ftp.users"]
+                [config-file             (os-build-rtm-path "conf/rftpd.conf")]
+                [users-file              (os-build-rtm-path "conf/rftpd.users")]
                 
                 [bad-admin-auth-sleep-sec 120]
-                [max-admin-pass-attempts  5])
+                [max-admin-passw-attempts 5])
     
     (define log-out #f)
     (define server #f)
@@ -133,11 +157,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (set! show-banner? #t)]
              [("-e" "--echo")
               "Show echo"
-              (set! echo? #t)]
-             ["--path"
-              path
-              ("Change current directory" "Syntax: --path \"path\"")
-              (current-directory path)]))
+              (set! echo? #t)]))
           (unless (or show-banner? echo? ci-interactive?) 
             (HideConsole))
           (when show-banner?
@@ -209,10 +229,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         [log-output-port log-out]))
       (load-users)
       (start!)
-      (server-control)
-      (let loop ()
-        (sleep 60)
-        (loop)))
+      (thread-wait (server-control)))
     
     (define/private (server-control)
       (let ([cust (make-custodian)])
@@ -235,7 +252,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/private (eval-cmd input-port output-port)
       (let ([pass (read-line input-port)])
-        (if (and (or ((car bad-admin-auth). < . max-admin-pass-attempts)
+        (if (and (or ((car bad-admin-auth). < . max-admin-passw-attempts)
                      (> ((current-seconds). - .(cdr bad-admin-auth))
                         bad-admin-auth-sleep-sec))
                  (string=? pass control-passwd))
@@ -304,7 +321,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                ((ssl-protocol&certificate)
                                                 (set! server-1-encryption 
                                                       (and (ftp:ssl-protocol? (second param)) (second param)))
-                                                (set! server-1-certificate (third param)))
+                                                (set! server-1-certificate (build-rtm-path (third param))))
                                                ((passive-ports)
                                                 (set! passive-1-ports 
                                                       (ftp:make-passive-ports (second param) (third param)))))))
@@ -321,7 +338,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                ((ssl-protocol&certificate)
                                                 (set! server-2-encryption 
                                                       (and (ftp:ssl-protocol? (second param)) (second param)))
-                                                (set! server-2-certificate (third param)))
+                                                (set! server-2-certificate (build-rtm-path (third param))))
                                                ((passive-ports)
                                                 (set! passive-2-ports 
                                                       (ftp:make-passive-ports (second param) (third param)))))))
@@ -338,7 +355,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                ((ssl-protocol&certificate)
                                                 (set! control-encryption 
                                                       (and (ftp:ssl-protocol? (second param)) (second param)))
-                                                (set! control-certificate (third param)))
+                                                (set! control-certificate (build-rtm-path (third param))))
                                                ((passwd)
                                                 (set! control-passwd (second param))))))
                                          (cdr param)))
@@ -350,7 +367,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                (set! default-root-dir (second param)))
                               ((log-file)
                                (when log-out (close-output-port log-out))
-                               (set! log-out (open-output-file (second param) #:exists 'append)))))
+                               (set! log-out (open-output-file (build-rtm-path (second param)) #:exists 'append)))))
                           (cdr conf))))))))
     
     (define/private (load-users)
