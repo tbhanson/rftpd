@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.2.3
+Racket FTP Server Library v1.2.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -77,6 +77,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    bad-auth
    
    bad-auth-sleep
+   max-auth-attempts
    
    pass-sleep))
 
@@ -87,6 +88,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ;;
 (define ftp-run-date (srfi/19:current-date))
 (define ftp-date-zone-offset (srfi/19:date-zone-offset ftp-run-date))
+(define ftp-vfs-file-extension #"ftp-racket-file")
+(define ftp-vfs-dir-extension #"ftp-racket-directory")
+(define ftp-vfs-file-spath ".ftp-racket-file")
+(define ftp-vfs-dir-spath "/.ftp-racket-directory")
 (define pasv-sema (make-semaphore 1))
 
 (define default-server-responses
@@ -294,7 +299,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/public (ftp-mkdir* spath [owner "racket"][group "racket"][permissions #b111110100])
       (make-directory spath)
-      (ftp-mksys-file (string-append spath "/.ftp-racket-directory")
+      (ftp-mksys-file (string-append spath ftp-vfs-dir-spath)
                       owner group permissions))
     
     (define/public (ftp-mksys-file sys-file [owner "racket"][group "racket"][permissions #b111110100])
@@ -307,16 +312,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/public (ftp-dir-exists? spath)
       (and (directory-exists? spath)
-           (file-exists? (string-append spath "/.ftp-racket-directory"))))
+           (file-exists? (string-append spath ftp-vfs-dir-spath))))
     
     (define/public (ftp-file-exists? spath)
       (and (file-exists? spath)
-           (file-exists? (string-append spath ".ftp-racket-file"))))
+           (file-exists? (string-append spath ftp-vfs-file-spath))))
     
     (define/public (ftp-file-name-safe? spath)
       (not (and (filename-extension spath)
-                (or (bytes=? (filename-extension spath) #"ftp-racket-file")
-                    (bytes=? (filename-extension spath) #"ftp-racket-directory")))))
+                (or (bytes=? (filename-extension spath) ftp-vfs-file-extension)
+                    (bytes=? (filename-extension spath) ftp-vfs-dir-extension)))))
     
     (define/public (simplify-ftp-path ftp-path [drop-tail-elem 0])
       (with-handlers ([any/c (λ (e) "/")])
@@ -356,22 +361,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (bitwise-bit-set? sysbytes 7))))))
     
     (define/public (ftp-dir-allow-read? spath user)
-      (ftp-allow-read? (string-append spath "/.ftp-racket-directory") user))
+      (ftp-allow-read? (string-append spath ftp-vfs-dir-spath) user))
     
     (define/public (ftp-dir-allow-write? spath user)
-      (ftp-allow-write? (string-append spath "/.ftp-racket-directory") user))
+      (ftp-allow-write? (string-append spath ftp-vfs-dir-spath) user))
     
     (define/public (ftp-dir-allow-delete-move? spath user)
-      (ftp-allow-delete-move? (string-append spath "/.ftp-racket-directory") user))
+      (ftp-allow-delete-move? (string-append spath ftp-vfs-dir-spath) user))
     
     (define/public (ftp-file-allow-read? spath user)
-      (ftp-allow-read? (string-append spath ".ftp-racket-file") user))
+      (ftp-allow-read? (string-append spath ftp-vfs-file-spath) user))
     
     (define/public (ftp-file-allow-write? spath user)
-      (ftp-allow-write? (string-append spath ".ftp-racket-file") user))
+      (ftp-allow-write? (string-append spath ftp-vfs-file-spath) user))
     
     (define/public (ftp-file-allow-delete-move? spath user)
-      (ftp-allow-delete-move? (string-append spath ".ftp-racket-file") user))))
+      (ftp-allow-delete-move? (string-append spath ftp-vfs-file-spath) user))))
 
 (define ftp-utils%
   (mixin () ()
@@ -559,8 +564,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (with-handlers ([any/c (λ (e) (print-abort))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
-                          (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
-                            (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
+                          (unless (file-exists? (string-append new-file-full-path ftp-vfs-file-spath))
+                            (ftp-mksys-file (string-append new-file-full-path ftp-vfs-file-spath)
                                             (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
                           (let-values ([(in out) (net-connect host port)])
                             (print-connect)
@@ -593,8 +598,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (with-handlers ([any/c (λ (e) (print-abort))])
                     (call-with-output-file new-file-full-path
                       (λ (fout)
-                        (unless (file-exists? (string-append new-file-full-path ".ftp-racket-file"))
-                          (ftp-mksys-file (string-append new-file-full-path ".ftp-racket-file")
+                        (unless (file-exists? (string-append new-file-full-path ftp-vfs-file-spath))
+                          (ftp-mksys-file (string-append new-file-full-path ftp-vfs-file-spath)
                                           (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
                         (let-values ([(in out) (net-accept (get-passive-listener 
                                                             (ftp-host&port-port passive-host&port)))])
@@ -810,8 +815,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (print-crlf/encoding** 'ANONYMOUS-LOGGED)
                      #t)
                     ((and (hash-ref bad-auth-table *user-id* #f)
-                          ((mcar (hash-ref bad-auth-table *user-id*)). >= . 5)
-                          (<= (- (current-seconds) (mcdr (hash-ref bad-auth-table *user-id*)))
+                          ((mcar (hash-ref bad-auth-table *user-id*)). >= . max-auth-attempts)
+                          (<= ((current-seconds). - .(mcdr (hash-ref bad-auth-table *user-id*)))
                               bad-auth-sleep-sec))
                      (let ([pair (hash-ref bad-auth-table *user-id*)])
                        (set-mcar! pair (add1 (mcar pair)))
@@ -1010,11 +1015,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                ,(vector-ref info 1) ,(vector-ref info 2) ,ftp-path)))
          
          (define (read-ftp-dir-sys-info ftp-path spath)
-           (let ([info (read-ftp-sys-info ftp-path (string-append spath "/.ftp-racket-directory"))])
+           (let ([info (read-ftp-sys-info ftp-path (string-append spath ftp-vfs-dir-spath))])
              (string-append "d" (car info) (second info) (third info) " 2 " (fourth info) " " (fifth info))))
          
          (define (read-ftp-file-sys-info ftp-path spath)
-           (let ([info (read-ftp-sys-info ftp-path (string-append spath ".ftp-racket-file"))])
+           (let ([info (read-ftp-sys-info ftp-path (string-append spath ftp-vfs-file-spath))])
              (string-append "-" (car info) (second info) (third info) " 1 " (fourth info) " " (fifth info))))
          
          (define (dlst ftp-dir-name)
@@ -1189,7 +1194,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            (print-crlf/encoding** 'DELDIR-NOT-EMPTY)
                            (with-handlers ([exn:fail:filesystem? (λ (e)
                                                                    (print-crlf/encoding* "550 System error."))])
-                             (delete-file (string-append spath "/.ftp-racket-directory"))
+                             (delete-file (string-append spath ftp-vfs-dir-spath))
                              (delete-directory spath)
                              (print-log-event (format "Remove a directory ~a" (simplify-ftp-path ftp-path)))
                              (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RMD"))))
@@ -1255,7 +1260,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (if (ftp-file-allow-delete-move? spath current-ftp-user)
                  (with-handlers ([exn:fail:filesystem? (λ (e)
                                                          (print-crlf/encoding* "550 System error."))])
-                   (delete-file (string-append spath ".ftp-racket-file"))
+                   (delete-file (string-append spath ftp-vfs-file-spath))
                    (delete-file spath)
                    (print-log-event (format "Delete a file ~a" (simplify-ftp-path ftp-path)))
                    (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "DELE"))
@@ -1298,17 +1303,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                ((memq (string-ref path 0) '(#\/ #\\))
                 (cond
                   ((ftp-file-exists? (string-append *root-dir* path))
-                   (fchmod (string-append *root-dir* path) ".ftp-racket-file"))
+                   (fchmod (string-append *root-dir* path) ftp-vfs-file-spath))
                   ((ftp-dir-exists? (string-append *root-dir* path))
-                   (fchmod (string-append *root-dir* path) "/.ftp-racket-directory"))
+                   (fchmod (string-append *root-dir* path) ftp-vfs-dir-spath))
                   (else
                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
                ((ftp-file-exists? (string-append *root-dir* *current-dir* "/" path))
                 (fchmod (string-append *root-dir*
-                                       *current-dir* "/" path) ".ftp-racket-file"))
+                                       *current-dir* "/" path) ftp-vfs-file-spath))
                ((ftp-dir-exists? (string-append *root-dir* *current-dir* "/" path))
                 (fchmod (string-append *root-dir*
-                                       *current-dir* "/" path) "/.ftp-racket-directory"))
+                                       *current-dir* "/" path) ftp-vfs-dir-spath))
                (else
                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))]
         
@@ -1503,8 +1508,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (with-handlers ([exn:fail:filesystem?
                                            (λ (e) (print-crlf/encoding** 'CANT-RENAME))])
                             (when file?
-                              (rename-file-or-directory (string-append old-path ".ftp-racket-file")
-                                                        (string-append new-path ".ftp-racket-file")))
+                              (rename-file-or-directory (string-append old-path ftp-vfs-file-spath)
+                                                        (string-append new-path ftp-vfs-file-spath)))
                             (rename-file-or-directory old-path new-path)
                             (print-log-event (format "Rename the file or directory from ~a to ~a"
                                                      (real-path->ftp-path old-path *root-dir*)
@@ -1683,6 +1688,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax (bad-auth-sleep-sec stx)
       #'(ftp-server-params-bad-auth-sleep server-params))
     
+    (define-syntax (max-auth-attempts stx)
+      #'(ftp-server-params-max-auth-attempts server-params))
+    
     (define-syntax (pass-sleep-sec stx)
       #'(ftp-server-params-pass-sleep server-params))
     
@@ -1729,8 +1737,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              [file? (file-exists? path)]
              [info (ftp-file-or-dir-full-info (string-append path
                                                              (if file?
-                                                                 ".ftp-racket-file"
-                                                                 "/.ftp-racket-directory")))]
+                                                                 ftp-vfs-file-spath
+                                                                 ftp-vfs-dir-spath)))]
              [sysbytes (vector-ref info 0)]
              [user current-ftp-user]
              [user-name (ftp-user-login user)]
@@ -1819,7 +1827,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define host/c (or/c host-string? not))
 (define ssl-protocol/c (or/c ssl-protocol? not))
 (define not-null-string/c (and/c string? (λ(dir) (not (string=? dir "")))))
-(define ssl-certificate/c (or/c not-null-string/c not))
+(define ssl-certificate/c (or/c path-string? not))
 
 (define/contract ftp-server%
   (class/c (init-field [welcome-message         string?]
@@ -1838,6 +1846,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [transfer-wait-time      exact-nonnegative-integer?]
                        
                        [bad-auth-sleep-sec      exact-nonnegative-integer?]
+                       [max-auth-attempts       exact-nonnegative-integer?]
                        [pass-sleep-sec          exact-nonnegative-integer?]
                        
                        [disable-ftp-commands    (listof symbol?)]
@@ -1872,16 +1881,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [server-2-encryption     #f]
                 [server-2-certificate    #f]
                 
-                [max-allow-wait          50]
+                [max-allow-wait          25]
                 [transfer-wait-time      120]
                 
                 [bad-auth-sleep-sec      60]
+                [max-auth-attempts       5]
                 [pass-sleep-sec          0]
                 
                 [disable-ftp-commands    null]
                 
-                [passive-1-ports         (make-passive-ports 40000 40599)]
-                [passive-2-ports         (make-passive-ports 40000 40599)]
+                [passive-1-ports         (make-passive-ports 40000 40199)]
+                [passive-2-ports         (make-passive-ports 40000 40199)]
                 
                 [default-root-dir        "ftp-dir"]
                 [default-locale-encoding "UTF-8"]
@@ -1935,6 +1945,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                server-ftp-users        ;ftp-users
                                                (make-hash)             ;bad-auth
                                                bad-auth-sleep-sec
+                                               max-auth-attempts
                                                pass-sleep-sec))
         (init-ftp-dirs default-root-dir)
         (parameterize ([current-custodian server-custodian])
