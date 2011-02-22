@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.1.8
+Racket FTP Server v1.1.9
 ----------------------------------------------------------------------
 
 Summary:
@@ -67,13 +67,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     [(_ path)
      (if (eq? (system-type) 'windows)
          #'path
-         #'(build-rtm-path (build-path "../" path)))]))
+         #'(build-rtm-path (build-path 'up path)))]))
 
 (define racket-ftp-server%
   (class object%
     (super-new)
     
-    (init-field [server-name&version     "Racket FTP Server v1.1.8 <development>"]
+    (init-field [server-name&version     "Racket FTP Server v1.1.9 <development>"]
                 [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 [ci-help-msg             "Type 'help' or '?' for help."]
                 
