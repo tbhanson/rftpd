@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.1.9
+Racket FTP Server v1.2.0
 ----------------------------------------------------------------------
 
 Summary:
@@ -30,7 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (file "lib-ssl.rkt")
          (prefix-in ftp: (file "lib-rftpd.rkt")))
 
-(define-for-syntax DrRacket-DEBUG? #t)
+(define-for-syntax DrRacket-DEBUG? #f)
 
 (define-syntax (if-drdebug so)
   (syntax-case so ()
@@ -67,13 +67,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     [(_ path)
      (if (eq? (system-type) 'windows)
          #'path
-         #'(build-rtm-path (build-path 'up path)))]))
+         #'(build-rtm-path (string-append "../" path)))]))
 
 (define racket-ftp-server%
   (class object%
     (super-new)
     
-    (init-field [server-name&version     "Racket FTP Server v1.1.9 <development>"]
+    (init-field [server-name&version     "Racket FTP Server v1.2.0 <development>"]
                 [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
                 [ci-help-msg             "Type 'help' or '?' for help."]
                 
@@ -94,12 +94,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 
                 [server-max-allow-wait   25]
                 
-                [passive-1-ports         (ftp:make-passive-ports 40000 40199)]
-                [passive-2-ports         (ftp:make-passive-ports 40000 40199)]
+                [passive-1-ports         (ftp:make-passive-ports 40000 40999)]
+                [passive-2-ports         (ftp:make-passive-ports 40000 40999)]
                 
                 [control-passwd          "12345"]
                 [control-host            "127.0.0.1"]
-                [control-port            40200]
+                [control-port            41234]
                 [control-encryption      'sslv3]
                 [control-certificate     (os-build-rtm-path "certs/control.pem")]
                 
@@ -110,6 +110,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 
                 [config-file             (os-build-rtm-path "conf/rftpd.conf")]
                 [users-file              (os-build-rtm-path "conf/rftpd.users")]
+                [groups-file             (os-build-rtm-path "conf/rftpd.groups")]
                 
                 [bad-admin-auth-sleep-sec 120]
                 [max-admin-passw-attempts 5])
@@ -228,6 +229,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         [default-locale-encoding default-locale-encoding]
                         [log-output-port log-out]))
       (load-users)
+      (load-groups)
       (start!)
       (thread-wait (server-control)))
     
@@ -379,6 +381,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (for-each (λ (user)
                             (send server add-ftp-user
                                   (car user) (second user) (third user) (fourth user) (fifth user) (sixth user)))
+                          (cdr conf))))))))
+    
+    (define/private (load-groups)
+      (with-handlers ([any/c void])
+        (call-with-input-file groups-file
+          (λ (in)
+            (let ([conf (read in)])
+              (when (eq? (car conf) 'ftp-server-groups)
+                (for-each (λ (group)
+                            (send server add-ftp-group (car group) (cdr group)))
                           (cdr conf))))))))
     
     (define/private (init)
