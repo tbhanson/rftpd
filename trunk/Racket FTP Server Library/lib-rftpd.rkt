@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.2.8
+Racket FTP Server Library v1.2.9
 ----------------------------------------------------------------------
 
 Summary:
@@ -220,10 +220,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (and expr ...))]))
 
 (define (IPv4? ip)
-  (with-handlers ([any/c (λ (e) #f)])
-    (let ([l (regexp-split #rx"\\." ip)])
-      (and ((length l) . = . 4)
-           (andmap (λ(s) (byte? (string->number s))) l)))))
+  (and/exc
+   (let ([l (regexp-split #rx"\\." ip)])
+     (and ((length l) . = . 4)
+          (andmap (λ(s) (byte? (string->number s))) l)))))
 
 (define (IPv6? ip)
   (and/exc (regexp-match #rx"^[0-9a-fA-F]+:|^::" ip)
@@ -238,6 +238,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 #t
                                 ((string->number s 16). <= . #xFFFF)))
                           l)))))
+
+(define (private-IPv4? ip)
+  (and/exc
+   (IPv4? ip)
+   (let ([l (map string->number (regexp-split #rx"\\." ip))])
+     (or ((first l). = . 10)
+         ((first l). = . 127)
+         (and ((first l). = . 169) 
+              ((second l). = . 254))
+         (and ((first l). = . 172)
+              ((second l). >= . 16)
+              ((second l). <= . 31))
+         (and ((first l). = . 192) 
+              ((second l). = . 168))))))
 
 (define (host-string? host)
   (and (string? host)
@@ -531,11 +545,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (active-data-transfer data file?))))
     
     (define (active-data-transfer data file?)
+      (set! current-process (make-custodian))
       (let ([host (ftp-host&port-host active-host&port)]
             [port (ftp-host&port-port active-host&port)])
         (parameterize ([current-custodian current-process])
           (thread (λ ()
-                    (with-handlers ([any/c (λ (e) (print-abort))])
+                    (with-handlers ([any/c (λ (e) 
+                                             (print-abort)
+                                             (custodian-shutdown-all current-process))])
                       (let-values ([(in out) (net-connect host port)])
                         (print-connect)
                         (let-values ([(reset-alarm kill-alarm)
@@ -567,7 +584,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (passive-data-transfer data file?)
       (parameterize ([current-custodian current-process])
         (thread (λ ()
-                  (with-handlers ([any/c (λ (e) (print-abort))])
+                  (with-handlers ([any/c (λ (e) 
+                                           (print-abort)
+                                           (custodian-shutdown-all current-process))])
                     (let-values ([(in out) (net-accept pasv-listener)])
                       (print-connect)
                       (let-values ([(reset-alarm kill-alarm)
@@ -603,11 +622,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (active-store-file current-ftp-user new-file-full-path exists-mode))))
     
     (define (active-store-file current-ftp-user new-file-full-path exists-mode)
+      (set! current-process (make-custodian))
       (let ([host (ftp-host&port-host active-host&port)]
             [port (ftp-host&port-port active-host&port)])
         (parameterize ([current-custodian current-process])
           (thread (λ ()
-                    (with-handlers ([any/c (λ (e) (print-abort))])
+                    (with-handlers ([any/c (λ (e) 
+                                             (print-abort)
+                                             (custodian-shutdown-all current-process))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
                           (unless (file-exists? (string-append new-file-full-path ftp-vfs-file-spath))
@@ -640,7 +662,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (passive-store-file current-ftp-user new-file-full-path exists-mode)
       (parameterize ([current-custodian current-process])
         (thread (λ ()
-                  (with-handlers ([any/c (λ (e) (print-abort))])
+                  (with-handlers ([any/c (λ (e) 
+                                           (print-abort)
+                                           (custodian-shutdown-all current-process))])
                     (call-with-output-file new-file-full-path
                       (λ (fout)
                         (unless (file-exists? (string-append new-file-full-path ftp-vfs-file-spath))
@@ -680,9 +704,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       #'(passive-ports-from (ftp-server-params-passive-1-ports server-params)))
     
     (define-syntax (passive-2-ports-from stx)
-      #'(passive-ports-from (ftp-server-params-passive-2-ports server-params)))
-    
-    ))
+      #'(passive-ports-from (ftp-server-params-passive-2-ports server-params)))))
 
 (define ftp-session%
   (class ftp-DTP%
