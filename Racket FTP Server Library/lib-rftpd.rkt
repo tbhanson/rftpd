@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.2.7
+Racket FTP Server Library v1.2.8
 ----------------------------------------------------------------------
 
 Summary:
@@ -1243,7 +1243,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                (let ([spath (string-append *root-dir* ftp-path)])
                  (if ((file-or-directory-identity spath). = .(file-or-directory-identity *root-dir*))
                      (print-crlf/encoding** 'DIR-NOT-FOUND)
-                     (if (ftp-dir-allow-write*? (string-append spath "/.."))
+                     (if (ftp-dir-allow-write*? (simplify-ftp-path spath 1))
                          (let ([lst (directory-list spath)])
                            (if (> (length lst) 1)
                                (print-crlf/encoding** 'DELDIR-NOT-EMPTY)
@@ -1546,7 +1546,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                (cond
                  ((ftp-file-exists? path1)
                   (if (ftp-perm-allow? params)
-                      (if (ftp-dir-allow-write*? (string-append path1 "/.."))
+                      (if (ftp-dir-allow-write*? (simplify-ftp-path path1 1))
                           (begin
                             (set! *rename-path* path1)
                             (print-crlf/encoding** 'RENAME-OK))
@@ -1554,7 +1554,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
                  ((ftp-dir-exists? path1)
                   (if (ftp-perm-allow? params)
-                      (if (ftp-dir-allow-write*? (string-append path1 "/.."))
+                      (if (ftp-dir-allow-write*? (simplify-ftp-path path1 1))
                           (begin
                             (set! *rename-path* path1)
                             (print-crlf/encoding** 'RENAME-OK))
@@ -1564,7 +1564,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
               ((ftp-file-exists? path2)
                (if (ftp-perm-allow? (string-append *current-dir* "/" params))
-                   (if (ftp-dir-allow-write*? (string-append path2 "/.."))
+                   (if (ftp-dir-allow-write*? (simplify-ftp-path path2 1))
                        (begin
                          (set! *rename-path* path2)
                          (print-crlf/encoding** 'RENAME-OK))
@@ -1572,7 +1572,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
               ((ftp-dir-exists? path2)
                (if (ftp-perm-allow? (string-append *current-dir* "/" params))
-                   (if (ftp-dir-allow-write*? (string-append path2 "/.."))
+                   (if (ftp-dir-allow-write*? (simplify-ftp-path path2 1))
                        (begin
                          (set! *rename-path* path2)
                          (print-crlf/encoding** 'RENAME-OK))
@@ -2030,7 +2030,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define/public (add-ftp-user full-name login pass group home-dirs [root-dir default-root-dir])
       (let ([root-dir (get-params* #rx".+" root-dir)])
         (hash-set! server-ftp-users login (ftp-user full-name login pass group home-dirs root-dir))
-        (init-ftp-dirs root-dir)
+        (unless (ftp-dir-exists? root-dir)
+          (ftp-mkdir* root-dir login group))
         (for-each (λ (home-dir)
                     (unless (ftp-dir-exists? (string-append root-dir home-dir))
                       (let ([dirs (filter (λ (s) (not (string=? s "")))
@@ -2072,7 +2073,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                bad-auth-sleep-sec
                                                max-auth-attempts
                                                pass-sleep-sec))
-        (init-ftp-dirs default-root-dir)
+        (unless (ftp-dir-exists? default-root-dir)
+          (ftp-mkdir* default-root-dir))
         (parameterize ([current-custodian server-custodian])
           (when (and server-1-host server-1-port)
             (let* ([ssl-server-ctx
@@ -2135,16 +2137,4 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (custodian-shutdown-all server-custodian)
         (set! state 'stopped)))
     
-    (define/public (status) state)
-    ;;
-    ;; ---------- Private Methods ----------
-    ;;
-    (define/private (init-ftp-dirs root-dir)
-      (unless (ftp-dir-exists? root-dir)
-        (ftp-mkdir* root-dir)))
-    
-    (define-syntax (passive-1-host stx) #'server-1-host)
-    
-    (define-syntax (passive-2-host stx) #'server-2-host)
-    
-    ))
+    (define/public (status) state)))
