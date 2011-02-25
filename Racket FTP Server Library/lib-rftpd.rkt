@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.3.0
+Racket FTP Server Library v1.3.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -218,11 +218,32 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
      #'(with-handlers ([any/c (λ (e) #f)])
          (and expr ...))]))
 
+(define (string-split chlst str [start 0][end (string-length str)])
+  (let loop [(i start)]
+    (cond 
+      [(= i end)
+       (list (substring str start))]
+      [(memq (string-ref str i) chlst)
+       (cons (substring str start i) 
+             (string-split chlst str (add1 i) end))]
+      [else
+       (loop (add1 i))])))
+
+(define (string-split-char char str [start 0][end (string-length str)])
+  (let loop [(i start)]
+    (cond 
+      [(= i end)
+       (list (substring str start))]
+      [(eq? (string-ref str i) char)
+       (cons (substring str start i) 
+             (string-split-char char str (add1 i) end))]
+      [else
+       (loop (add1 i))])))
+
 (define (IPv4? ip)
-  (and/exc
-   (let ([l (regexp-split #rx"\\." ip)])
-     (and ((length l) . = . 4)
-          (andmap (λ(s) (byte? (string->number s))) l)))))
+  (and/exc (let ([l (string-split-char #\. ip)])
+             (and ((length l) . = . 4)
+                  (andmap (λ(s) (byte? (string->number s))) l)))))
 
 (define (IPv6? ip)
   (and/exc (regexp-match #rx"^[0-9a-fA-F]+:|^::" ip)
@@ -239,18 +260,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           l)))))
 
 (define (private-IPv4? ip)
-  (and/exc
-   (IPv4? ip)
-   (let ([l (map string->number (regexp-split #rx"\\." ip))])
-     (or ((first l). = . 10)
-         ((first l). = . 127)
-         (and ((first l). = . 169) 
-              ((second l). = . 254))
-         (and ((first l). = . 172)
-              ((second l). >= . 16)
-              ((second l). <= . 31))
-         (and ((first l). = . 192) 
-              ((second l). = . 168))))))
+  (and/exc (let ([l (map string->number (string-split-char #\. ip))])
+             (and ((length l) . = . 4)
+                  (andmap byte? l)
+                  (or ((first l). = . 10)
+                      ((first l). = . 127)
+                      (and ((first l). = . 169) 
+                           ((second l). = . 254))
+                      (and ((first l). = . 172)
+                           ((second l). >= . 16)
+                           ((second l). <= . 31))
+                      (and ((first l). = . 192) 
+                           ((second l). = . 168)))))))
 
 (define (host-string? host)
   (and (string? host)
@@ -984,17 +1005,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (PORT-COMMAND params)
-      (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR ""))])
-        (unless (regexp-match #rx"^[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+$" params)
-          (raise 'error))
-        (let* ([l (regexp-split #rx"," params)]
-               [host (string-append (first l) "." (second l) "." (third l) "." (fourth l))]
-               [port (((string->number (fifth l)). * . 256). + .(string->number (sixth l)))])
-          (when (or (not (IPv4? host)) (negative? port) (port . > . #xffff)) (raise 'error))
-          (set! DTP 'active)
-          ;(set! active-host&port (ftp-host&port host port))
-          (set! active-host&port (ftp-host&port (if (private-IPv4? host) *client-host* host) port))
-          (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "PORT"))))
+      (if (and params
+               (regexp-match #rx"^[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+$" params))
+          (let* ([l (string-split-char #\, params)]
+                 [host (string-append (first l) "." (second l) "." (third l) "." (fourth l))]
+                 [port (((string->number (fifth l)). * . 256). + .(string->number (sixth l)))])
+            (if (and (IPv4? host) 
+                     (positive? port) 
+                     (port . <= . #xffff))
+                (begin
+                  (set! DTP 'active)
+                  ;(set! active-host&port (ftp-host&port host port))
+                  (set! active-host&port (ftp-host&port (if (private-IPv4? host) *client-host* host) port))
+                  (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "PORT"))
+                (print-crlf/encoding** 'SYNTAX-ERROR "")))
+          (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (REST-COMMAND params)
       (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'SYNTAX-ERROR ""))])
