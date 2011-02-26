@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.3.2
+Racket FTP Server Library v1.3.3
 ----------------------------------------------------------------------
 
 Summary:
@@ -1076,7 +1076,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              [(9) "Sep"][(10) "Oct"][(11) "Nov"][(12) "Dec"]))
          
          (define (date-time->string dte)
-           (string-append (number->string (date-day dte)) " " (month->string (date-month dte)) " "
+           (string-append (month->string (date-month dte)) " " (number->string (date-day dte)) " "
                           (if ((date-year (current-date)). = .(date-year dte))
                               (format "~a~d:~a~d"
                                       (if (< (date-hour dte) 10) "0" "")
