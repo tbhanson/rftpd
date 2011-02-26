@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.2.0
+Racket FTP Server v1.2.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -30,7 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (file "lib-ssl.rkt")
          (prefix-in ftp: (file "lib-rftpd.rkt")))
 
-(define-for-syntax DrRacket-DEBUG? #f)
+(define-for-syntax DrRacket-DEBUG? #t)
 
 (define-syntax (if-drdebug so)
   (syntax-case so ()
@@ -73,47 +73,54 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version     "Racket FTP Server v1.2.0 <development>"]
-                [copyright               "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
-                [ci-help-msg             "Type 'help' or '?' for help."]
+    (init-field [server-name&version        "Racket FTP Server v1.2.1 <development>"]
+                [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <cnet@land.ru>"]
+                [ci-help-msg                "Type 'help' or '?' for help."]
                 
-                [read-cmd-line?          #f]
-                [ci-interactive?         #f]
-                [show-banner?            #f]
-                [echo?                   #f]
+                [read-cmd-line?             #f]
+                [ci-interactive?            #f]
+                [show-banner?               #f]
+                [echo?                      #f]
                 
-                [server-1-host           "127.0.0.1"]
-                [server-1-port           21]
-                [server-1-encryption     #f]
-                [server-1-certificate    (os-build-rtm-path "certs/server-1.pem")]
+                [server-1-host              "127.0.0.1"]
+                [server-1-port              21]
+                [server-1-encryption        #f]
+                [server-1-certificate       (os-build-rtm-path "certs/server-1.pem")]
                 
-                [server-2-host           #f]
-                [server-2-port           21]
-                [server-2-encryption     #f]
-                [server-2-certificate    (os-build-rtm-path "certs/server-2.pem")]
+                [server-2-host              #f]
+                [server-2-port              21]
+                [server-2-encryption        #f]
+                [server-2-certificate       (os-build-rtm-path "certs/server-2.pem")]
                 
-                [server-max-allow-wait   25]
+                [server-max-allow-wait      25]
+                [server-transfer-wait-time  120]
                 
-                [passive-1-ports         (ftp:make-passive-ports 40000 40999)]
-                [passive-2-ports         (ftp:make-passive-ports 40000 40999)]
+                [server-bad-auth-sleep-sec  60]
+                [server-max-auth-attempts   5]
+                [server-passwd-sleep-sec    0]
                 
-                [control-passwd          "12345"]
-                [control-host            "127.0.0.1"]
-                [control-port            41234]
-                [control-encryption      'sslv3]
-                [control-certificate     (os-build-rtm-path "certs/control.pem")]
+                [disable-ftp-commands       null]
                 
-                [default-locale-encoding "UTF-8"]
-                [default-root-dir        "ftp-dir"]
+                [passive-1-host&ports       (ftp:make-passive-host&ports "127.0.0.1" 40000 40999)]
+                [passive-2-host&ports       (ftp:make-passive-host&ports "127.0.0.1" 40000 40999)]
                 
-                [log-file                (os-build-rtm-path "logs/rftpd.log")]
+                [control-passwd             "12345"]
+                [control-host               "127.0.0.1"]
+                [control-port               41234]
+                [control-encryption         'sslv3]
+                [control-certificate        (os-build-rtm-path "certs/control.pem")]
                 
-                [config-file             (os-build-rtm-path "conf/rftpd.conf")]
-                [users-file              (os-build-rtm-path "conf/rftpd.users")]
-                [groups-file             (os-build-rtm-path "conf/rftpd.groups")]
+                [default-locale-encoding    "UTF-8"]
+                [default-root-dir           "ftp-dir"]
                 
-                [bad-admin-auth-sleep-sec 120]
-                [max-admin-passw-attempts 5])
+                [log-file                   (os-build-rtm-path "logs/rftpd.log")]
+                
+                [config-file                (os-build-rtm-path "conf/rftpd.conf")]
+                [users-file                 (os-build-rtm-path "conf/rftpd.users")]
+                [groups-file                (os-build-rtm-path "conf/rftpd.groups")]
+                
+                [bad-admin-auth-sleep-sec   120]
+                [max-admin-passwd-attempts  5])
     
     (define log-out #f)
     (define server #f)
@@ -223,8 +230,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         [server-2-encryption server-2-encryption]
                         [server-2-certificate server-2-certificate]
                         [max-allow-wait server-max-allow-wait]
-                        [passive-1-ports passive-1-ports]
-                        [passive-2-ports passive-2-ports]
+                        [transfer-wait-time server-transfer-wait-time]
+                        [bad-auth-sleep-sec server-bad-auth-sleep-sec]
+                        [max-auth-attempts server-max-auth-attempts]
+                        [pass-sleep-sec server-passwd-sleep-sec]
+                        [disable-ftp-commands disable-ftp-commands]
+                        [passive-1-host&ports passive-1-host&ports]
+                        [passive-2-host&ports passive-2-host&ports]
                         [default-root-dir default-root-dir]
                         [default-locale-encoding default-locale-encoding]
                         [log-output-port log-out]))
@@ -254,7 +266,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/private (eval-cmd input-port output-port)
       (let ([pass (read-line input-port)])
-        (if (and (or ((car bad-admin-auth). < . max-admin-passw-attempts)
+        (if (and (or ((car bad-admin-auth). < . max-admin-passwd-attempts)
                      (> ((current-seconds). - .(cdr bad-admin-auth))
                         bad-admin-auth-sleep-sec))
                  (string=? pass control-passwd))
@@ -324,9 +336,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                 (set! server-1-encryption 
                                                       (and (ftp:ssl-protocol? (second param)) (second param)))
                                                 (set! server-1-certificate (build-rtm-path (third param))))
-                                               ((passive-ports)
-                                                (set! passive-1-ports 
-                                                      (ftp:make-passive-ports (second param) (third param)))))))
+                                               ((passive-host&ports)
+                                                (set! passive-1-host&ports 
+                                                      (ftp:make-passive-host&ports (second param) 
+                                                                                   (third param)
+                                                                                   (fourth param)))))))
                                          (cdr param)))
                               ((server-2)
                                (for-each (λ (param)
@@ -341,9 +355,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                 (set! server-2-encryption 
                                                       (and (ftp:ssl-protocol? (second param)) (second param)))
                                                 (set! server-2-certificate (build-rtm-path (third param))))
-                                               ((passive-ports)
-                                                (set! passive-2-ports 
-                                                      (ftp:make-passive-ports (second param) (third param)))))))
+                                               ((passive-host&ports)
+                                                (set! passive-2-host&ports 
+                                                      (ftp:make-passive-host&ports (second param) 
+                                                                                   (third param)
+                                                                                   (fourth param)))))))
                                          (cdr param)))
                               ((control-server)
                                (for-each (λ (param)
@@ -359,10 +375,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                       (and (ftp:ssl-protocol? (second param)) (second param)))
                                                 (set! control-certificate (build-rtm-path (third param))))
                                                ((passwd)
-                                                (set! control-passwd (second param))))))
+                                                (set! control-passwd (second param)))
+                                               ((bad-admin-auth-sleep-sec)
+                                                (set! bad-admin-auth-sleep-sec (second param)))
+                                               ((max-admin-passwd-attempts)
+                                                (set! max-admin-passwd-attempts (second param))))))
                                          (cdr param)))
                               ((max-allow-wait)
                                (set! server-max-allow-wait (second param)))
+                              ((transfer-wait-time)
+                               (set! server-transfer-wait-time (second param)))
+                              ((bad-auth-sleep-sec)
+                               (set! server-bad-auth-sleep-sec (second param)))
+                              ((max-auth-attempts)
+                               (set! server-max-auth-attempts (second param)))
+                              ((passwd-sleep-sec)
+                               (set! server-passwd-sleep-sec (second param)))
+                              ((disable-ftp-commands)
+                               (set! disable-ftp-commands (second param)))
                               ((default-locale-encoding)
                                (set! default-locale-encoding (second param)))
                               ((default-root-dir)
