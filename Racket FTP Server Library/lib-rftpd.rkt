@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.3.1
+Racket FTP Server Library v1.3.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -37,17 +37,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          IPv6?
          host-string?
          port-number?
-         ssl-protocol?
-         make-passive-ports)
+         ssl-protocol?)
 
 (struct ftp-user (full-name login pass group home-dirs root-dir))
 (struct ftp-host&port (host port))
-(struct passive-ports (from to))
+(struct passive-host&ports (host from to))
 (struct ftp-mlst-features (size? modify? perm?) #:mutable)
 
 (struct ftp-server-params
-  (passive-1-ports
-   passive-2-ports
+  (passive-1-host&ports
+   passive-2-host&ports
    
    server-1-host
    server-2-host
@@ -117,8 +116,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (RU . "221 До свидания."))
      (ABORT (EN . "226 Abort successful.")
             (RU . "226 Текущая операция прервана."))
-     (SYSTEM (EN . "215 UNIX (Unix-like)")
-             (RU. "215 UNIX (Unix-подобная)"))
+     (SYSTEM (EN . "215 UNIX emulated by RFTPd")
+             (RU . "215 UNIX эмулируется RFTPd"))
      (CURRENT-DIR (EN . "257 ~s is current directory.")
                   (RU . "257 ~s - текущий каталог."))
      (CMD-SUCCESSFUL (EN . "~a ~a command successful.")
@@ -283,9 +282,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define (ssl-protocol? prt)
   (memq prt '(sslv2-or-v3 sslv2 sslv3 tls)))
 
-(define (make-passive-ports from to)
-  (and (port-number? from) (port-number? to) (from . < . to)
-       (passive-ports from to)))
+(provide/contract
+ [make-passive-host&ports ((or/c IPv4? IPv6?) port-number? port-number? . -> . passive-host&ports?)])
+
+(define (make-passive-host&ports host from to)
+  (and (from . < . to)
+       (passive-host&ports host from to)))
 
 (define (short-print-log-event log-out client-host user-id msg [user-name? #t])
   (if user-name?
@@ -356,14 +358,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (or (bytes=? (filename-extension spath) ftp-vfs-file-extension)
                     (bytes=? (filename-extension spath) ftp-vfs-dir-extension)))))
     
+    (define/public (build-ftp-spath current-dir . spaths)
+      (let ([spath (apply string-append spaths)])
+        (if (and (pair? spaths)
+                 (memq (string-ref spath 0) '(#\\ #\/)))
+            (path->string (simplify-path spath #f))
+            (string-append current-dir 
+                           (path->string (simplify-path (string-append "/" spath) #f))))))
+    
     (define/public (simplify-ftp-path ftp-path [drop-tail-elem 0])
       (with-handlers ([any/c (λ (e) "/")])
-        (let ([path-lst (drop-right (filter (λ (s) (not (string=? s "")))
+        (let ([path-lst (drop-right (filter (λ (s) (not (or (string=? s "") (string=? s ".."))))
                                             (regexp-split #rx"[/\\\\]+" (simplify-path ftp-path #f)))
                                     drop-tail-elem)])
           (if (null? path-lst)
               "/"
-              (foldr (λ (a b) (string-append "/" a b)) "" path-lst)))))
+              (if (memq (string-ref ftp-path 0) '(#\\ #\/))
+                  (foldr (λ (a b) (string-append "/" a b)) "" path-lst)
+                  (string-append (car path-lst) 
+                                 (foldr (λ (a b) (string-append "/" a b)) "" (cdr path-lst))))))))
     
     (define/public (member-ftp-group? groups user group)
       (or (string=? group (ftp-user-group user))
@@ -689,10 +702,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       #'(ftp-server-params-default-locale-encoding server-params))
     
     (define-syntax (passive-1-ports-from stx)
-      #'(passive-ports-from (ftp-server-params-passive-1-ports server-params)))
+      #'(passive-host&ports-from (ftp-server-params-passive-1-ports server-params)))
     
     (define-syntax (passive-2-ports-from stx)
-      #'(passive-ports-from (ftp-server-params-passive-2-ports server-params)))))
+      #'(passive-host&ports-from (ftp-server-params-passive-2-ports server-params)))))
 
 (define ftp-session%
   (class ftp-DTP%
@@ -704,6 +717,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              read-request
              real-path->ftp-path
              ftp-file-or-dir-full-info
+             build-ftp-spath
              simplify-ftp-path
              ftp-file-name-safe?
              ftp-file-exists?
@@ -806,7 +820,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         reset))
     
     (define (accept-client-request [reset-timer void])
-      (with-handlers ([any/c  #|displayln|# void])
+      (with-handlers ([any/c #|displayln|# void])
         (print-crlf/encoding** 'WELCOME welcome-message)
         ;(sleep 1)
         (let loop ([request (read-request *locale-encoding* *client-input-port*)])
@@ -1010,9 +1024,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (let* ([l (string-split-char #\, params)]
                  [host (string-append (first l) "." (second l) "." (third l) "." (fourth l))]
                  [port (((string->number (fifth l)). * . 256). + .(string->number (sixth l)))])
-            (if (and (IPv4? host) 
-                     (positive? port) 
-                     (port . <= . #xffff))
+            (if (and (IPv4? host) (port-number? port))
                 (begin
                   (set! DTP 'active)
                   ;(set! active-host&port (ftp-host&port host port))
@@ -1102,7 +1114,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        (string-append*
                         (map (λ (p)
                                (let* ([spath (path->string p)]
-                                      [ftp-full-spath (string-append (simplify-ftp-path ftp-dir-name) "/" spath)]
+                                      [ftp-full-spath (string-append ftp-dir-name "/" spath)]
                                       [full-spath (string-append full-dir-name "/" spath)])
                                  (if (or (ftp-file-exists? full-spath)
                                          (ftp-dir-exists? full-spath))
@@ -1129,50 +1141,31 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        (let ([d (regexp-match #px"[^-\\w][^ \t-]+.*" params)])
                          (and d (substring (car d) 1)))
                        params)])
-          (cond
-            ((not dir)
-             (dlst *current-dir*))
-            ((memq (string-ref dir 0) '(#\/ #\\))
-             (if (and (ftp-dir-exists? (string-append *root-dir* dir))
-                      (ftp-perm-allow? dir))
-                 (if (ftp-dir-allow-execute*? (string-append *root-dir* dir))
-                     (dlst dir)
-                     (unless status
-                       (print-crlf/encoding** 'PERM-DENIED)))
-                 (unless status
-                   (print-crlf/encoding** 'DIR-NOT-FOUND))))
-            ((and (ftp-dir-exists? (string-append *root-dir* *current-dir* "/" dir))
-                  (ftp-perm-allow? (string-append *current-dir* "/" dir)))
-             (if (ftp-dir-allow-execute*? (string-append *root-dir* *current-dir* "/" dir))
-                 (dlst (string-append *current-dir* "/" dir))
-                 (unless status
-                   (print-crlf/encoding** 'PERM-DENIED))))
-            (else
-             (unless status
-               (print-crlf/encoding** 'DIR-NOT-FOUND)))))))
+          (if (not dir)
+              (dlst *current-dir*)
+              (let ([spath (build-ftp-spath* dir)])
+                (if (and (ftp-dir-exists? (string-append *root-dir* spath))
+                         (ftp-perm-allow? spath))
+                    (if (ftp-dir-allow-execute*? (string-append *root-dir* spath))
+                        (dlst spath)
+                        (unless status
+                          (print-crlf/encoding** 'PERM-DENIED)))
+                    (unless status
+                      (print-crlf/encoding** 'DIR-NOT-FOUND))))))))
     
     (define (RETR-COMMAND params)
       (local [(define (fcopy full-path-file)
                 (ftp-data-transfer full-path-file #t))]
         
-        (cond
-          ((not params)
-           (print-crlf/encoding** 'SYNTAX-ERROR ""))
-          ((and (memq (string-ref params 0) '(#\/ #\\))
-                (ftp-file-exists? (string-append *root-dir* params)))
-           (if (ftp-perm-allow? params)
-               (if (ftp-file-allow-read*? (string-append *root-dir* params))
-                   (fcopy (string-append *root-dir* params))
-                   (print-crlf/encoding** 'PERM-DENIED))
-               (print-crlf/encoding** 'FILE-NOT-FOUND)))
-          ((ftp-file-exists? (string-append *root-dir* *current-dir* "/" params))
-           (if (ftp-perm-allow? (string-append *current-dir* "/" params))
-               (if (ftp-file-allow-read*? (string-append *root-dir* *current-dir* "/" params))
-                   (fcopy (string-append *root-dir* *current-dir* "/" params))
-                   (print-crlf/encoding** 'PERM-DENIED))
-               (print-crlf/encoding** 'FILE-NOT-FOUND)))
-          (else
-           (print-crlf/encoding** 'FILE-NOT-FOUND)))))
+        (if (not params)
+            (print-crlf/encoding** 'SYNTAX-ERROR "")
+            (let ([spath (build-ftp-spath* params)])
+              (if (and (ftp-file-exists? (string-append *root-dir* spath))
+                       (ftp-perm-allow? spath))
+                  (if (ftp-file-allow-read*? (string-append *root-dir* spath))
+                      (fcopy (string-append *root-dir* spath))
+                      (print-crlf/encoding** 'PERM-DENIED))
+                  (print-crlf/encoding** 'FILE-NOT-FOUND))))))
     
     (define (TYPE-COMMAND params)
       (if params
@@ -1212,24 +1205,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (CWD-COMMAND params)
-      (cond
-        ((not params)
-         (print-crlf/encoding** 'SYNTAX-ERROR ""))
-        ((and (memq (string-ref params 0) '(#\/ #\\))
-              (ftp-dir-exists? (string-append *root-dir* params)))
-         (if (ftp-perm-allow? params)
-             (begin
-               (set! *current-dir* (simplify-ftp-path params))
-               (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "CWD"))
-             (print-crlf/encoding** 'DIR-NOT-FOUND)))
-        ((ftp-dir-exists? (string-append *root-dir* *current-dir* "/" params))
-         (if (ftp-perm-allow? (string-append *current-dir* "/" params))
-             (begin
-               (set! *current-dir* (simplify-ftp-path (string-append *current-dir* "/" params)))
-               (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "CWD"))
-             (print-crlf/encoding** 'DIR-NOT-FOUND)))
-        (else
-         (print-crlf/encoding** 'DIR-NOT-FOUND))))
+      (if (not params)
+          (print-crlf/encoding** 'SYNTAX-ERROR "")
+          (let ([spath (build-ftp-spath* params)])
+            (if (and (ftp-dir-exists? (string-append *root-dir* spath))
+                     (ftp-perm-allow? spath))
+                (begin
+                  (set! *current-dir* (simplify-ftp-path spath))
+                  (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "CWD"))
+                (print-crlf/encoding** 'DIR-NOT-FOUND)))))
     
     (define (MKD-COMMAND params)
       (local [(define (mkd ftp-parent-path dir-name user)
@@ -1266,14 +1250,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (print-crlf/encoding** 'CREATE-DIR-PERM-DENIED)))
                 ((not parent-path)
                  (mkd *current-dir* dir-name user))
-                ((memq (string-ref parent-path 0) '(#\/ #\\))
-                 (if (ftp-dir-exists? (string-append *root-dir* parent-path))
-                     (mkd parent-path dir-name user)
-                     (print-crlf/encoding** 'CANT-CREATE-DIR)))
-                ((ftp-dir-exists? (string-append *root-dir* *current-dir* "/" parent-path))
-                 (mkd (string-append *current-dir* "/" parent-path) dir-name user))
                 (else
-                 (print-crlf/encoding** 'CANT-CREATE-DIR))))
+                 (let ([spath (build-ftp-spath* parent-path)])
+                   (if (ftp-dir-exists? (string-append *root-dir* spath))
+                       (mkd spath dir-name user)
+                       (print-crlf/encoding** 'CANT-CREATE-DIR))))))
             (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
     (define (RMD-COMMAND params)
@@ -1296,14 +1277,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          (print-crlf/encoding** 'DELDIR-PERM-DENIED))))
                (print-crlf/encoding** 'DIR-NOT-FOUND)))]
         
-        (cond
-          ((and (memq (string-ref params 0) '(#\/ #\\))
-                (ftp-dir-exists? (string-append *root-dir* params)))
-           (rmd params))
-          ((ftp-dir-exists? (string-append *root-dir* *current-dir* "/" params))
-           (rmd (string-append *current-dir* "/" params)))
-          (else
-           (print-crlf/encoding** 'DIR-NOT-FOUND)))))
+        (let ([spath (build-ftp-spath* params)])
+          (if (ftp-dir-exists? (string-append *root-dir* spath))
+              (rmd spath)
+              (print-crlf/encoding** 'DIR-NOT-FOUND)))))
     
     (define (STORE-FILE params [exists-mode 'truncate])
       (local [(define (stor ftp-parent-path file-name)
@@ -1327,13 +1304,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (print-crlf/encoding** 'CANT-STORE-FILE))
                 ((not parent-path)
                  (stor *current-dir* file-name))
-                ((and (memq (string-ref parent-path 0) '(#\/ #\\))
-                      (ftp-dir-exists? (string-append *root-dir* parent-path)))
-                 (stor parent-path file-name))
-                ((ftp-dir-exists? (string-append *root-dir* *current-dir* "/" parent-path))
-                 (stor (string-append *current-dir* "/" parent-path) file-name))
                 (else
-                 (print-crlf/encoding** 'CANT-STORE-FILE))))
+                 (let ([spath (build-ftp-spath* parent-path)])
+                   (if (ftp-dir-exists? (string-append *root-dir* spath))
+                       (stor spath file-name)
+                       (print-crlf/encoding** 'CANT-STORE-FILE))))))
             (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
     (define (STOU-FILE params)
@@ -1366,14 +1341,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (print-crlf/encoding** 'DELFILE-PERM-DENIED)))
                (print-crlf/encoding** 'FILE-NOT-FOUND)))]
         
-        (cond
-          ((and (memq (string-ref params 0) '(#\/ #\\))
-                (ftp-file-exists? (string-append *root-dir* params)))
-           (dele params))
-          ((ftp-file-exists? (string-append *root-dir* *current-dir* "/" params))
-           (dele (string-append *current-dir* "/" params)))
-          (else
-           (print-crlf/encoding** 'FILE-NOT-FOUND)))))
+        (let ([spath (build-ftp-spath* params)])
+          (if (ftp-file-exists? (string-append *root-dir* spath))
+              (dele spath)
+              (print-crlf/encoding** 'FILE-NOT-FOUND)))))
     
     (define (SITE-COMMAND params)
       (local
@@ -1403,21 +1374,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                  (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHMOD"))
                                (print-crlf/encoding** 'PERM-DENIED)))
                          (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
-             (cond
-               ((memq (string-ref path 0) '(#\/ #\\))
-                (cond
-                  ((ftp-file-exists? (string-append *root-dir* path))
-                   (fchmod path ftp-vfs-file-spath))
-                  ((ftp-dir-exists? (string-append *root-dir* path))
-                   (fchmod path ftp-vfs-dir-spath))
-                  (else
-                   (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
-               ((ftp-file-exists? (string-append *root-dir* *current-dir* "/" path))
-                (fchmod (string-append *current-dir* "/" path) ftp-vfs-file-spath))
-               ((ftp-dir-exists? (string-append *root-dir* *current-dir* "/" path))
-                (fchmod (string-append *current-dir* "/" path) ftp-vfs-dir-spath))
-               (else
-                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))]
+             (let ([spath (build-ftp-spath* path)])
+               (cond
+                 ((ftp-file-exists? (string-append *root-dir* spath))
+                  (fchmod spath ftp-vfs-file-spath))
+                 ((ftp-dir-exists? (string-append *root-dir* spath))
+                  (fchmod spath ftp-vfs-dir-spath))
+                 (else
+                  (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))))]
         
         (if params
             (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
@@ -1446,9 +1410,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                        (seconds->mdtm-time-format
                                                         (file-or-directory-modify-seconds full-path))))
                          (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))])
-            (if (memq (string-ref params 0) '(#\/ #\\))
-                (mdtm params)
-                (mdtm (string-append *current-dir* "/" params))))
+            (mdtm (build-ftp-spath* params)))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (SIZE-COMMAND params);; ???
@@ -1460,9 +1422,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (ftp-perm-allow? ftp-spath))
                          (print-crlf/encoding* (format "213 ~a" (file-size full-path)))
                          (print-crlf/encoding** 'FILE-NOT-FOUND))))])
-            (if (memq (string-ref params 0) '(#\/ #\\))
-                (size params)
-                (size (string-append *current-dir* "/" params))))
+            (size (build-ftp-spath* params)))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (MLST-COMMAND params)
@@ -1474,34 +1434,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       (print-crlf/encoding* (string-append " " (mlst-info ftp-path)))
                       (print-crlf/encoding** 'END 250))
                     (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))]
-        (cond
-          ((not params)
-           (let ([path (string-append *root-dir* *current-dir*)])
-             (if ((file-or-directory-identity path). = .(file-or-directory-identity *root-dir*))
-                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)
-                 (mlst *current-dir*))))
-          ((memq (string-ref params 0) '(#\/ #\\))
-           (let ([path (string-append *root-dir* params)])
-             (cond
-               ((ftp-file-exists? path)
-                (mlst params))
-               ((ftp-dir-exists? path)
-                (if ((file-or-directory-identity path). = .(file-or-directory-identity *root-dir*))
-                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)
-                    (mlst params)))
-               (else
-                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
-          (else
-           (let ([path (string-append *root-dir* *current-dir* "/" params)])
-             (cond
-               ((ftp-file-exists? path)
-                (mlst (string-append *current-dir* "/" params)))
-               ((ftp-dir-exists? path)
-                (if ((file-or-directory-identity path). = .(file-or-directory-identity *root-dir*))
-                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)
-                    (mlst (string-append *current-dir* "/" params))))
-               (else
-                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))))))
+        
+        (if params
+            (let* ([spath (build-ftp-spath* params)]
+                   [path (string-append *root-dir* spath)])
+              (cond
+                ((ftp-file-exists? path)
+                 (mlst spath))
+                ((ftp-dir-exists? path)
+                 (if ((file-or-directory-identity path). = .(file-or-directory-identity *root-dir*))
+                     (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)
+                     (mlst spath)))
+                (else
+                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
+            (let ([path (string-append *root-dir* *current-dir*)])
+              (if ((file-or-directory-identity path). = .(file-or-directory-identity *root-dir*))
+                  (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)
+                  (mlst *current-dir*))))))
     
     (define (MLSD-COMMAND params)
       (local [(define (mlsd ftp-path)
@@ -1526,19 +1475,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                ((Image) (string->bytes/encoding *locale-encoding* dirlist)))))
                         (print-crlf/encoding** 'PERM-DENIED))
                     (print-crlf/encoding** 'DIR-NOT-FOUND)))]
-        (cond
-          ((not params)
-           (mlsd *current-dir*))
-          ((memq (string-ref params 0) '(#\/ #\\))
-           (let ([path (string-append *root-dir* params)])
-             (if (ftp-dir-exists? path)
-                 (mlsd params)
-                 (print-crlf/encoding** 'DIR-NOT-FOUND))))
-          (else
-           (let ([path (string-append *root-dir* *current-dir* "/" params)])
-             (if (ftp-dir-exists? path)
-                 (mlsd (string-append *current-dir* "/" params))
-                 (print-crlf/encoding** 'DIR-NOT-FOUND)))))))
+        
+        (if params
+            (let* ([spath (build-ftp-spath* params)]
+                   [path (string-append *root-dir* spath)])
+              (if (ftp-dir-exists? path)
+                  (mlsd spath)
+                  (print-crlf/encoding** 'DIR-NOT-FOUND)))
+            (mlsd *current-dir*))))
     
     (define (OPTS-COMMAND params)
       (if params
@@ -1579,42 +1523,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (RNFR-COMMAND params)
       (if params
-          (let ([path1 (string-append *root-dir* params)]
-                [path2 (string-append *root-dir* *current-dir* "/" params)])
+          (let* ([spath (build-ftp-spath* params)]
+                 [path (string-append *root-dir* spath)])
             (cond
-              ((memq (string-ref params 0) '(#\/ #\\))
-               (cond
-                 ((ftp-file-exists? path1)
-                  (if (ftp-perm-allow? params)
-                      (if (ftp-dir-allow-write*? (simplify-ftp-path path1 1))
-                          (begin
-                            (set! *rename-path* path1)
-                            (print-crlf/encoding** 'RENAME-OK))
-                          (print-crlf/encoding** 'PERM-DENIED))
-                      (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
-                 ((ftp-dir-exists? path1)
-                  (if (ftp-perm-allow? params)
-                      (if (ftp-dir-allow-write*? (simplify-ftp-path path1 1))
-                          (begin
-                            (set! *rename-path* path1)
-                            (print-crlf/encoding** 'RENAME-OK))
-                          (print-crlf/encoding** 'PERM-DENIED))
-                      (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
-                 (else
-                  (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
-              ((ftp-file-exists? path2)
-               (if (ftp-perm-allow? (string-append *current-dir* "/" params))
-                   (if (ftp-dir-allow-write*? (simplify-ftp-path path2 1))
+              ((ftp-file-exists? path)
+               (if (ftp-perm-allow? spath)
+                   (if (ftp-dir-allow-write*? (simplify-ftp-path path 1))
                        (begin
-                         (set! *rename-path* path2)
+                         (set! *rename-path* path)
                          (print-crlf/encoding** 'RENAME-OK))
                        (print-crlf/encoding** 'PERM-DENIED))
                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
-              ((ftp-dir-exists? path2)
-               (if (ftp-perm-allow? (string-append *current-dir* "/" params))
-                   (if (ftp-dir-allow-write*? (simplify-ftp-path path2 1))
+              ((ftp-dir-exists? path)
+               (if (ftp-perm-allow? spath)
+                   (if (ftp-dir-allow-write*? (simplify-ftp-path path 1))
                        (begin
-                         (set! *rename-path* path2)
+                         (set! *rename-path* path)
                          (print-crlf/encoding** 'RENAME-OK))
                        (print-crlf/encoding** 'PERM-DENIED))
                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
@@ -1669,13 +1593,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (print-crlf/encoding** 'CANT-RENAME-EXIST))
                     ((not parent-path)
                      (move old-file? old-path curr-dir name user))
-                    ((and (memq (string-ref parent-path 0) '(#\/ #\\))
-                          (ftp-dir-exists? (string-append *root-dir* parent-path)))
-                     (move old-file? old-path parent-path name user))
-                    ((ftp-dir-exists? (string-append *root-dir* curr-dir "/" parent-path))
-                     (move old-file? old-path (string-append curr-dir "/" parent-path) name user))
                     (else
-                     (print-crlf/encoding** 'CANT-RENAME)))
+                     (let ([spath (build-ftp-spath* parent-path)])
+                       (if (ftp-dir-exists? (string-append *root-dir* spath))
+                           (move old-file? old-path spath name user)
+                           (print-crlf/encoding** 'CANT-RENAME)))))
                   (set! *rename-path* #f))
                 (print-crlf/encoding** 'RENAME-PERM-DENIED))
             (print-crlf/encoding** 'SYNTAX-ERROR ""))))
@@ -1788,22 +1710,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       #'(ftp-server-params-server-2-host server-params))
     
     (define-syntax (passive-1-host stx)
-      #'server-1-host)
+      #'(passive-host&ports-host (ftp-server-params-passive-1-host&ports server-params)))
     
     (define-syntax (passive-2-host stx)
-      #'server-2-host)
+      #'(passive-host&ports-host (ftp-server-params-passive-2-host&ports server-params)))
     
     (define-syntax (passive-1-ports-from stx)
-      #'(passive-ports-from (ftp-server-params-passive-1-ports server-params)))
+      #'(passive-host&ports-from (ftp-server-params-passive-1-host&ports server-params)))
     
     (define-syntax (passive-1-ports-to stx)
-      #'(passive-ports-to (ftp-server-params-passive-1-ports server-params)))
+      #'(passive-host&ports-to (ftp-server-params-passive-1-host&ports server-params)))
     
     (define-syntax (passive-2-ports-from stx)
-      #'(passive-ports-from (ftp-server-params-passive-2-ports server-params)))
+      #'(passive-host&ports-from (ftp-server-params-passive-2-host&ports server-params)))
     
     (define-syntax (passive-2-ports-to stx)
-      #'(passive-ports-to (ftp-server-params-passive-2-ports server-params)))
+      #'(passive-host&ports-to (ftp-server-params-passive-2-host&ports server-params)))
     
     (define-syntax (default-root-dir stx)
       #'(ftp-server-params-default-root-dir server-params))
@@ -1871,6 +1793,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define-syntax-rule (ftp-dir-allow-execute*? ftp-full-spath)
       (ftp-dir-allow-execute? ftp-full-spath current-ftp-user ftp-groups))
+    
+    (define-syntax-rule (build-ftp-spath* ftp-spath ...)
+      (build-ftp-spath *current-dir* ftp-spath ...))
     
     (define (seconds->mdtm-time-format seconds)
       (let ([dte (seconds->date (- seconds ftp-date-zone-offset))])
@@ -2008,8 +1933,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        
                        [disable-ftp-commands    (listof symbol?)]
                        
-                       [passive-1-ports         passive-ports?]
-                       [passive-2-ports         passive-ports?]
+                       [passive-1-host&ports    passive-host&ports?]
+                       [passive-2-host&ports    passive-host&ports?]
                        
                        [default-root-dir        not-null-string/c]
                        [default-locale-encoding string?]
@@ -2048,8 +1973,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 
                 [disable-ftp-commands    null]
                 
-                [passive-1-ports         (make-passive-ports 40000 40999)]
-                [passive-2-ports         (make-passive-ports 40000 40999)]
+                [passive-1-host&ports    (make-passive-host&ports "127.0.0.1" 40000 40999)]
+                [passive-2-host&ports    (make-passive-host&ports "127.0.0.1" 40000 40999)]
                 
                 [default-root-dir        "ftp-dir"]
                 [default-locale-encoding "UTF-8"]
@@ -2101,8 +2026,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define/public (start)
       (when (eq? state 'stopped)
         (set! server-custodian (make-custodian))
-        (set! server-params (ftp-server-params passive-1-ports
-                                               passive-2-ports
+        (set! server-params (ftp-server-params passive-1-host&ports
+                                               passive-2-host&ports
                                                server-1-host
                                                server-2-host
                                                default-server-responses
