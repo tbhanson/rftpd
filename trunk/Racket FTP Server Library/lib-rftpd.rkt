@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.3.3
+Racket FTP Server Library v1.3.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -719,6 +719,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              ftp-file-or-dir-full-info
              build-ftp-spath
              simplify-ftp-path
+             member-ftp-group?
              ftp-file-name-safe?
              ftp-file-exists?
              ftp-file-allow-read?
@@ -1364,37 +1365,106 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    (λ (ftp-spath target)
                      (if (ftp-perm-allow? ftp-spath)
                          (let* ([full-path (string-append *root-dir* ftp-spath)]
-                                [owner (vector-ref (ftp-file-or-dir-sysbytes/owner (string-append full-path target)) 1)]
-                                [user current-ftp-user])
-                           (if (string=? owner (ftp-user-login user))
+                                [info (ftp-file-or-dir-full-info (string-append full-path target))]
+                                [owner (vector-ref info 1)]
+                                [group (vector-ref info 2)])
+                           (if (or (string=? owner (ftp-user-login current-ftp-user))
+                                   (member-ftp-group? ftp-groups current-ftp-user "root"))
                                (begin
                                  (ftp-mksys-file (string-append full-path target)
-                                                 (ftp-user-login user) (ftp-user-group user)
-                                                 (get-permis permis))
+                                                 owner group (get-permis permis))
                                  (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHMOD"))
                                (print-crlf/encoding** 'PERM-DENIED)))
-                         (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
-             (let ([spath (build-ftp-spath* path)])
-               (cond
-                 ((ftp-file-exists? (string-append *root-dir* spath))
-                  (fchmod spath ftp-vfs-file-spath))
-                 ((ftp-dir-exists? (string-append *root-dir* spath))
-                  (fchmod spath ftp-vfs-dir-spath))
-                 (else
-                  (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))))]
+                         (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))]
+                  [spath (build-ftp-spath* path)])
+             (cond
+               ((ftp-file-exists? (string-append *root-dir* spath))
+                (fchmod spath ftp-vfs-file-spath))
+               ((ftp-dir-exists? (string-append *root-dir* spath))
+                (fchmod spath ftp-vfs-dir-spath))
+               (else
+                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
+         
+         (define (chown owner path)
+           (let ([spath (build-ftp-spath* path)]
+                 [fchown 
+                  (λ (ftp-spath target)
+                    (if (ftp-perm-allow? ftp-spath)
+                        (let* ([full-path (string-append *root-dir* ftp-spath)]
+                               [info (ftp-file-or-dir-full-info (string-append full-path target))]
+                               [perm (vector-ref info 0)]
+                               [group (vector-ref info 2)])
+                          (if (or (member-ftp-group? ftp-groups current-ftp-user "root")
+                                  (string=? owner (ftp-user-login current-ftp-user)))
+                              (begin
+                                (ftp-mksys-file (string-append full-path target)
+                                                owner group perm)
+                                (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHOWN"))
+                              (print-crlf/encoding** 'PERM-DENIED)))
+                        (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
+             (cond
+               ((ftp-file-exists? (string-append *root-dir* spath))
+                (fchown spath ftp-vfs-file-spath))
+               ((ftp-dir-exists? (string-append *root-dir* spath))
+                (fchown spath ftp-vfs-dir-spath))
+               (else
+                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
+         
+         (define (chgrp group path)
+           (let ([spath (build-ftp-spath* path)]
+                 [fchgrp
+                  (λ (ftp-spath target)
+                    (if (ftp-perm-allow? ftp-spath)
+                        (let* ([full-path (string-append *root-dir* ftp-spath)]
+                               [info (ftp-file-or-dir-full-info (string-append full-path target))]
+                               [perm (vector-ref info 0)]
+                               [owner (vector-ref info 1)])
+                          (if (or (member-ftp-group? ftp-groups current-ftp-user group)
+                                  (member-ftp-group? ftp-groups current-ftp-user "root"))
+                              (begin
+                                (ftp-mksys-file (string-append full-path target)
+                                                owner group perm)
+                                (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHGRP"))
+                              (print-crlf/encoding** 'PERM-DENIED)))
+                        (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
+             (cond
+               ((ftp-file-exists? (string-append *root-dir* spath))
+                (fchgrp spath ftp-vfs-file-spath))
+               ((ftp-dir-exists? (string-append *root-dir* spath))
+                (fchgrp spath ftp-vfs-dir-spath))
+               (else
+                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))]
         
         (if params
             (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
               (case cmd
-                ((CHMOD)
-                 (let* ([permis+tail (car (regexp-match #rx"[^ \tA-z]+.+" params))]
-                        [permis (regexp-match #rx"[0-7]?[0-7][0-7][0-7]" permis+tail)])
+                [(CHMOD)
+                 (let* ([permis+path (car (regexp-match #rx"[^ \tA-z]+.+" params))]
+                        [permis (regexp-match #rx"[0-7]?[0-7][0-7][0-7]" permis+path)])
                    (if permis
-                       (let ([path (regexp-match #rx"[^ \t0-7]+.*" permis+tail)])
+                       (let ([path (regexp-match #rx"[^ \t0-7]+.*" permis+path)])
                          (if path
                              (chmod (string->list (car permis)) (car path))
                              (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))
-                       (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:"))))
+                       (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))]
+                [(CHOWN)
+                 (let* ([owner+path (get-params params)]
+                        [owner (regexp-match #px"\\w+[^ \t]+" owner+path)])
+                   (if owner
+                       (let ([path (get-params owner+path)])
+                         (if path
+                             (chown (car owner) path)
+                             (print-crlf/encoding** 'SYNTAX-ERROR "CHOWN:")))
+                       (print-crlf/encoding** 'SYNTAX-ERROR "CHOWN:")))]
+                [(CHGRP)
+                 (let* ([group+path (get-params params)]
+                        [group (regexp-match #px"\\w+[^ \t]+" group+path)])
+                   (if group
+                       (let ([path (get-params group+path)])
+                         (if path
+                             (chgrp (car group) path)
+                             (print-crlf/encoding** 'SYNTAX-ERROR "CHGRP:")))
+                       (print-crlf/encoding** 'SYNTAX-ERROR "CHGRP:")))]
                 (else (print-crlf/encoding** 'MISSING-PARAMS))))
             (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
