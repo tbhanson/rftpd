@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.3.4
+Racket FTP Server Library v1.3.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -453,16 +453,41 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (mixin () ()
     (super-new)
     
-    (define/public (get-params req)
-      (get-params* #rx"[^A-z]+.*" req))
+    (define/public (get-params str)
+      (let ([start 0]
+            [end (string-length str)])
+        (do [] [(not (memq (string-ref str start) '(#\space #\tab)))]
+          (set! start (add1 start)))
+        (do [] [(memq (string-ref str start) '(#\space #\tab))]
+          (set! start (add1 start)))
+        (do [] [(not (memq (string-ref str start) '(#\space #\tab)))]
+          (set! start (add1 start)))
+        (do [] [(not (memq (string-ref str (sub1 end)) '(#\space #\tab)))]
+          (set! end (sub1 end)))
+        (substring str start end)))
+    
+    (define/public (delete-lws str [ws '(#\space #\tab)])
+      (do [(i 0 (add1 i))]
+        [(not (memq (string-ref str i) ws))
+         (substring str i)]))
+    
+    (define/public (delete-rws str [ws '(#\space #\tab)])
+      (do [(i (string-length str) (sub1 i))]
+        [(not (memq (string-ref str (sub1 i)) ws))
+         (substring str 0 i)]))
+    
+    (define/public (delete-lrws str [ws '(#\space #\tab)])
+      (let ([start 0]
+            [end (string-length str)])
+        (do [] [(not (memq (string-ref str start) ws))]
+          (set! start (add1 start)))
+        (do [] [(not (memq (string-ref str (sub1 end)) ws))]
+          (set! end (sub1 end)))
+        (substring str start end)))
     
     (define/public (get-params* delseq req)
       (let ([p (regexp-match delseq req)])
-        (and p
-             (let ([p (regexp-match #rx"[^ \t]+.*" (car p))])
-               (and p
-                    (let ([p (regexp-match #rx".*[^ \t]+" (car p))])
-                      (and p (car p))))))))))
+        (and p (delete-lrws (car p)))))))
 
 (define ftp-encoding%
   (mixin () ()
@@ -1394,8 +1419,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                [info (ftp-file-or-dir-full-info (string-append full-path target))]
                                [perm (vector-ref info 0)]
                                [group (vector-ref info 2)])
-                          (if (or (member-ftp-group? ftp-groups current-ftp-user "root")
-                                  (string=? owner (ftp-user-login current-ftp-user)))
+                          (if (and (hash-ref ftp-users owner #f)
+                                   (or (member-ftp-group? ftp-groups current-ftp-user "root")
+                                       (string=? owner (ftp-user-login current-ftp-user))))
                               (begin
                                 (ftp-mksys-file (string-append full-path target)
                                                 owner group perm)
@@ -1419,8 +1445,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                [info (ftp-file-or-dir-full-info (string-append full-path target))]
                                [perm (vector-ref info 0)]
                                [owner (vector-ref info 1)])
-                          (if (or (member-ftp-group? ftp-groups current-ftp-user group)
-                                  (member-ftp-group? ftp-groups current-ftp-user "root"))
+                          (if (and (hash-ref ftp-groups group #f)
+                                   (or (member-ftp-group? ftp-groups current-ftp-user group)
+                                       (member-ftp-group? ftp-groups current-ftp-user "root")))
                               (begin
                                 (ftp-mksys-file (string-append full-path target)
                                                 owner group perm)
@@ -1439,17 +1466,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
               (case cmd
                 [(CHMOD)
-                 (let* ([permis+path (car (regexp-match #rx"[^ \tA-z]+.+" params))]
+                 (let* ([permis+path (get-params params)]
                         [permis (regexp-match #rx"[0-7]?[0-7][0-7][0-7]" permis+path)])
                    (if permis
-                       (let ([path (regexp-match #rx"[^ \t0-7]+.*" permis+path)])
+                       (let ([path (regexp-match #rx"[^ ]+" permis+path)])
                          (if path
                              (chmod (string->list (car permis)) (car path))
                              (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))
                        (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))]
                 [(CHOWN)
                  (let* ([owner+path (get-params params)]
-                        [owner (regexp-match #px"\\w+[^ \t]+" owner+path)])
+                        [owner (regexp-match #rx"[^ ]+" owner+path)])
                    (if owner
                        (let ([path (get-params owner+path)])
                          (if path
@@ -1458,7 +1485,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        (print-crlf/encoding** 'SYNTAX-ERROR "CHOWN:")))]
                 [(CHGRP)
                  (let* ([group+path (get-params params)]
-                        [group (regexp-match #px"\\w+[^ \t]+" group+path)])
+                        [group (regexp-match #rx"[^ ]+" group+path)])
                    (if group
                        (let ([path (get-params group+path)])
                          (if path
@@ -2016,7 +2043,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   
   (class (ftp-utils% (ftp-vfs% object%))
     (super-new)
-    (inherit get-params*
+    (inherit delete-lrws
              ftp-dir-exists?
              ftp-mkdir)
     ;;
@@ -2065,7 +2092,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Public Methods ----------
     ;;
     (define/public (add-ftp-user full-name login pass group home-dirs [root-dir default-root-dir])
-      (let ([root-dir (get-params* #rx".+" root-dir)])
+      (let ([root-dir (delete-lrws root-dir)])
         (hash-set! server-ftp-users login (ftp-user full-name login pass group home-dirs root-dir))
         (unless (ftp-dir-exists? root-dir)
           (ftp-mkdir root-dir login group))
