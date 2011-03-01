@@ -116,8 +116,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (RU . "221 До свидания."))
      (ABORT (EN . "226 Abort successful.")
             (RU . "226 Текущая операция прервана."))
-     (SYSTEM (EN . "215 UNIX emulated by RFTPd")
-             (RU . "215 UNIX эмулируется RFTPd"))
+     (SYSTEM (EN . "215 UNIX emulated by RFTPd.")
+             (RU . "215 UNIX эмулируется RFTPd."))
      (CURRENT-DIR (EN . "257 ~s is current directory.")
                   (RU . "257 ~s - текущий каталог."))
      (CMD-SUCCESSFUL (EN . "~a ~a command successful.")
@@ -458,13 +458,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             [end (string-length str)])
         (do [] [(not (memq (string-ref str start) '(#\space #\tab)))]
           (set! start (add1 start)))
-        (do [] [(memq (string-ref str start) '(#\space #\tab))]
+        (do [] [(or (>= start end)
+                    (memq (string-ref str start) '(#\space #\tab)))]
           (set! start (add1 start)))
-        (do [] [(not (memq (string-ref str start) '(#\space #\tab)))]
-          (set! start (add1 start)))
-        (do [] [(not (memq (string-ref str (sub1 end)) '(#\space #\tab)))]
-          (set! end (sub1 end)))
-        (substring str start end)))
+        (and (< start end)
+             (do [] [(or (>= start end)
+                         (not (memq (string-ref str start) '(#\space #\tab))))]
+               (set! start (add1 start)))
+             (< start end)
+             (do [] [(not (memq (string-ref str (sub1 end)) '(#\space #\tab)))]
+               (set! end (sub1 end)))
+             (substring str start end))))
     
     (define/public (delete-lws str [ws '(#\space #\tab)])
       (do [(i 0 (add1 i))]
@@ -1469,9 +1473,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (let* ([permis+path (get-params params)]
                         [permis (regexp-match #rx"[0-7]?[0-7][0-7][0-7]" permis+path)])
                    (if permis
-                       (let ([path (regexp-match #rx"[^ ]+" permis+path)])
+                       (let ([path (get-params permis+path)])
                          (if path
-                             (chmod (string->list (car permis)) (car path))
+                             (chmod (string->list (car permis)) path)
                              (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))
                        (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))]
                 [(CHOWN)
