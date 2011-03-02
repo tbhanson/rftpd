@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.3.5
+Racket FTP Server Library v1.3.6
 ----------------------------------------------------------------------
 
 Summary:
@@ -289,12 +289,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (and (from . < . to)
        (passive-host&ports host from to)))
 
-(define (short-print-log-event log-out client-host user-id msg [user-name? #t])
-  (if user-name?
-      (fprintf log-out
-               "~a [~a] ~a : ~a\n" (date->string (current-date) #t) client-host user-id msg)
-      (fprintf log-out
-               "~a [~a] ~a\n" (date->string (current-date) #t) client-host msg)))
+(define short-print-log-event
+  (let ([sema (make-semaphore 1)])
+    (λ (log-out client-host user-id msg [user-name? #t])
+      (semaphore-wait sema)
+      (if user-name?
+          (fprintf log-out
+                   "~a [~a] ~a : ~a\n" (date->string (current-date) #t) client-host user-id msg)
+          (fprintf log-out
+                   "~a [~a] ~a\n" (date->string (current-date) #t) client-host msg))
+      (flush-output log-out)
+      (semaphore-post sema))))
 
 (define (alarm-clock period count [event (λ() 1)])
   (let* ([tick count]
@@ -1379,7 +1384,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (SITE-COMMAND params)
       (local
         [(define (chmod permis path)
-           (let* ([permis (if ((length permis). = . 4)
+           (let* ([spath (build-ftp-spath* path)]
+                  [permis (if ((length permis). = . 4)
                               (cdr permis)
                               permis)]
                   [ch->num (λ (c)
@@ -1402,10 +1408,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                (begin
                                  (ftp-mksys-file (string-append full-path target)
                                                  owner group (get-permis permis))
+                                 (print-log-event (format "Change the permissions of a ~a" 
+                                                          (simplify-ftp-path spath)))
                                  (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHMOD"))
                                (print-crlf/encoding** 'PERM-DENIED)))
-                         (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))]
-                  [spath (build-ftp-spath* path)])
+                         (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
              (cond
                ((ftp-file-exists? (string-append *root-dir* spath))
                 (fchmod spath ftp-vfs-file-spath))
@@ -1415,23 +1422,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
          
          (define (chown owner path)
-           (let ([spath (build-ftp-spath* path)]
-                 [fchown 
-                  (λ (ftp-spath target)
-                    (if (ftp-perm-allow? ftp-spath)
-                        (let* ([full-path (string-append *root-dir* ftp-spath)]
-                               [info (ftp-file-or-dir-full-info (string-append full-path target))]
-                               [perm (vector-ref info 0)]
-                               [group (vector-ref info 2)])
-                          (if (and (hash-ref ftp-users owner #f)
-                                   (or (member-ftp-group? ftp-groups current-ftp-user "root")
-                                       (string=? owner (ftp-user-login current-ftp-user))))
-                              (begin
-                                (ftp-mksys-file (string-append full-path target)
-                                                owner group perm)
-                                (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHOWN"))
-                              (print-crlf/encoding** 'PERM-DENIED)))
-                        (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
+           (let* ([spath (build-ftp-spath* path)]
+                  [fchown 
+                   (λ (ftp-spath target)
+                     (if (ftp-perm-allow? ftp-spath)
+                         (let* ([full-path (string-append *root-dir* ftp-spath)]
+                                [info (ftp-file-or-dir-full-info (string-append full-path target))]
+                                [perm (vector-ref info 0)]
+                                [group (vector-ref info 2)])
+                           (if (and (hash-ref ftp-users owner #f)
+                                    (or (member-ftp-group? ftp-groups current-ftp-user "root")
+                                        (string=? owner (ftp-user-login current-ftp-user))))
+                               (begin
+                                 (ftp-mksys-file (string-append full-path target)
+                                                 owner group perm)
+                                 (print-log-event (format "Change the owner of a ~a" 
+                                                          (simplify-ftp-path spath)))
+                                 (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHOWN"))
+                               (print-crlf/encoding** 'PERM-DENIED)))
+                         (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
              (cond
                ((ftp-file-exists? (string-append *root-dir* spath))
                 (fchown spath ftp-vfs-file-spath))
@@ -1441,23 +1450,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
          
          (define (chgrp group path)
-           (let ([spath (build-ftp-spath* path)]
-                 [fchgrp
-                  (λ (ftp-spath target)
-                    (if (ftp-perm-allow? ftp-spath)
-                        (let* ([full-path (string-append *root-dir* ftp-spath)]
-                               [info (ftp-file-or-dir-full-info (string-append full-path target))]
-                               [perm (vector-ref info 0)]
-                               [owner (vector-ref info 1)])
-                          (if (and (hash-ref ftp-groups group #f)
-                                   (or (member-ftp-group? ftp-groups current-ftp-user group)
-                                       (member-ftp-group? ftp-groups current-ftp-user "root")))
-                              (begin
-                                (ftp-mksys-file (string-append full-path target)
-                                                owner group perm)
-                                (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHGRP"))
-                              (print-crlf/encoding** 'PERM-DENIED)))
-                        (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
+           (let* ([spath (build-ftp-spath* path)]
+                  [fchgrp
+                   (λ (ftp-spath target)
+                     (if (ftp-perm-allow? ftp-spath)
+                         (let* ([full-path (string-append *root-dir* ftp-spath)]
+                                [info (ftp-file-or-dir-full-info (string-append full-path target))]
+                                [perm (vector-ref info 0)]
+                                [owner (vector-ref info 1)])
+                           (if (and (hash-ref ftp-groups group #f)
+                                    (or (member-ftp-group? ftp-groups current-ftp-user group)
+                                        (member-ftp-group? ftp-groups current-ftp-user "root")))
+                               (begin
+                                 (ftp-mksys-file (string-append full-path target)
+                                                 owner group perm)
+                                 (print-log-event (format "Change the group of a ~a" 
+                                                          (simplify-ftp-path spath)))
+                                 (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHGRP"))
+                               (print-crlf/encoding** 'PERM-DENIED)))
+                         (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
              (cond
                ((ftp-file-exists? (string-append *root-dir* spath))
                 (fchgrp spath ftp-vfs-file-spath))
