@@ -1299,7 +1299,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                (let ([spath (string-append *root-dir* ftp-path)])
                  (if ((file-or-directory-identity spath). = .(file-or-directory-identity *root-dir*))
                      (print-crlf/encoding** 'DIR-NOT-FOUND)
-                     (if (ftp-dir-allow-write*? (simplify-ftp-path spath 1))
+                     (if (ftp-dir-allow-write*? (string-append *root-dir* (simplify-ftp-path ftp-path 1)))
                          (let ([lst (directory-list spath)])
                            (if (> (length lst) 1)
                                (print-crlf/encoding** 'DELDIR-NOT-EMPTY)
@@ -1366,7 +1366,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         [(define (dele ftp-path)
            (if (ftp-perm-allow? ftp-path)
                (let ([spath (string-append *root-dir* ftp-path)])
-                 (if (ftp-dir-allow-write*? (simplify-ftp-path spath 1))
+                 (if (ftp-dir-allow-write*? (string-append *root-dir* (simplify-ftp-path ftp-path 1)))
                      (with-handlers ([exn:fail:filesystem? (λ (e)
                                                              (print-crlf/encoding* "550 System error."))])
                        (delete-file (string-append spath ftp-vfs-file-spath))
@@ -1640,7 +1640,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (cond
               ((ftp-file-exists? path)
                (if (ftp-perm-allow? spath)
-                   (if (ftp-dir-allow-write*? (simplify-ftp-path path 1))
+                   (if (ftp-dir-allow-write*? (string-append *root-dir* (simplify-ftp-path spath 1)))
                        (begin
                          (set! *rename-path* path)
                          (print-crlf/encoding** 'RENAME-OK))
@@ -1648,7 +1648,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
               ((ftp-dir-exists? path)
                (if (ftp-perm-allow? spath)
-                   (if (ftp-dir-allow-write*? (simplify-ftp-path path 1))
+                   (if (ftp-dir-allow-write*? (string-append *root-dir* (simplify-ftp-path spath 1)))
                        (begin
                          (set! *rename-path* path)
                          (print-crlf/encoding** 'RENAME-OK))
