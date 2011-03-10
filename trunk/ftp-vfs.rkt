@@ -59,7 +59,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (ftp-mksys-file (string-append spath ftp-vfs-dir-spath)
                   owner group permissions))
 
-(define (ftp-mksys-file sys-file [owner "racket"][group "racket"][permissions #b111101101])
+(define (ftp-mksys-file sys-file [owner "racket"][group "racket"][permissions #b110100100])
   (call-with-output-file sys-file
     (λ (out)
       [write-bytes (integer->integer-bytes permissions 2 #f) out]
