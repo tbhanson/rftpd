@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.3.8
+Racket FTP Server Library v1.3.9
 ----------------------------------------------------------------------
 
 Summary:
@@ -43,7 +43,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (struct ftp-host&port (host port))
 (struct passive-host&ports (host from to))
-(struct ftp-mlst-features (size? modify? perm?) #:mutable)
 
 (struct ftp-server-params
   (passive-1-host&ports
@@ -510,23 +509,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              string->bytes/encoding
              read-request
              net-accept
-             #|real-path->ftp-path
-             ftp-file-or-dir-full-info
-             build-ftp-spath
-             simplify-ftp-path
-             member-ftp-group?
-             ftp-file-name-safe?
-             ftp-file-exists?
-             ftp-file-allow-read?
-             ftp-file-allow-write?
-             ftp-dir-exists?
-             ftp-dir-allow-read?
-             ftp-dir-allow-write?
-             ftp-dir-allow-execute?
-             ftp-access-allow?
-             ftp-file-or-dir-sysbytes/owner
-             ftp-mkdir
-             ftp-mksys-file|#
              ftp-data-transfer
              ftp-store-file)
     
@@ -564,6 +546,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Private Definitions ----------
     ;;
+    (struct ftp-mlst-features (size? modify? perm?) #:mutable)
+    
     (define *client-host* #f)
     (define *client-input-port* #f)
     (define *client-output-port* #f)
@@ -574,7 +558,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define *root-dir* default-root-dir)
     (define *current-dir* "/")
     (define *rename-path* #f)
-    (define *mlst-features* (ftp-mlst-features #t #t #f))
+    (define *mlst-features* (ftp-mlst-features #t #t #t))
     (define *lang-list* (let ([r (hash-ref server-responses 'SYNTAX-ERROR)])
                           (map car r)))
     (define *current-lang* (car *lang-list*))
@@ -611,7 +595,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (accept-client-request [reset-timer void])
       (with-handlers ([any/c #|displayln|# void])
         (print-crlf/encoding** 'WELCOME welcome-message)
-        ;(sleep 1)
         (let loop ([request (read-request *locale-encoding* *client-input-port*)])
           (unless (eof-object? request)
             (when request
@@ -1681,6 +1664,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (mlst-info ftp-path [full-path? #t])
       (let* ([ftp-path (simplify-ftp-path ftp-path)]
              [path (string-append *root-dir* ftp-path)]
+             [parent-path (and (not (string=? "/" ftp-path))
+                               (string-append *root-dir* (simplify-ftp-path ftp-path 1)))]
              [name (path->string (file-name-from-path ftp-path))]
              [file? (file-exists? path)]
              [info (ftp-file-or-dir-full-info (string-append path
@@ -1703,14 +1688,26 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            (format "Perm=~a;"
                                    (cond
                                      ((string=? (vector-ref info 1) user-name)
-                                      (string-append (if (bitwise-bit-set? sysbytes 8) (if file? "r" "el") "")
-                                                     (if (bitwise-bit-set? sysbytes 7) (if file? "waf" "cmf") "")))
+                                      (string-append (if (bitwise-bit-set? sysbytes 8) (if file? "r" "l") "")
+                                                     (if (bitwise-bit-set? sysbytes 7) (if file? "a" "cm") "")
+                                                     (if (and (bitwise-bit-set? sysbytes 6) (not file?)) "e" "")
+                                                     (if (and parent-path
+                                                              (ftp-dir-allow-write*? parent-path))
+                                                         (if file? "wfd" "fd") "")))
                                      ((string=? (vector-ref info 2) group)
-                                      (string-append (if (bitwise-bit-set? sysbytes 5) (if file? "r" "el") "")
-                                                     (if (bitwise-bit-set? sysbytes 4) (if file? "waf" "cmf") "")))
+                                      (string-append (if (bitwise-bit-set? sysbytes 5) (if file? "r" "l") "")
+                                                     (if (bitwise-bit-set? sysbytes 4) (if file? "a" "cm") "")
+                                                     (if (and (bitwise-bit-set? sysbytes 3) (not file?)) "e" "")
+                                                     (if (and parent-path
+                                                              (ftp-dir-allow-write*? parent-path))
+                                                         (if file? "wfd" "fd") "")))
                                      (else
-                                      (string-append (if (bitwise-bit-set? sysbytes 2) (if file? "r" "el") "")
-                                                     (if (bitwise-bit-set? sysbytes 1) (if file? "waf" "cmf") "")))))
+                                      (string-append (if (bitwise-bit-set? sysbytes 2) (if file? "r" "l") "")
+                                                     (if (bitwise-bit-set? sysbytes 1) (if file? "a" "cm") "")
+                                                     (if (and (bitwise-bit-set? sysbytes 0) (not file?)) "e" "")
+                                                     (if (and parent-path
+                                                              (ftp-dir-allow-write*? parent-path))
+                                                         (if file? "wfd" "fd") "")))))
                            "")
                        " "
                        (if full-path? ftp-path name))))
