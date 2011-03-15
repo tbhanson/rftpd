@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.4.0
+Racket FTP Server Library v1.4.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -336,13 +336,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (super-new [default-encoding default-locale-encoding])
     
-    (define (net-connect host port)
-      (if ssl-client-context
-          (ssl-connect host port ssl-client-context)
-          (tcp-connect host port)))
-    
-    (define/public (net-accept listener)
-      (let-values ([(in out) (tcp-accept listener)])
+    (define/public (net-accept tcp-listener)
+      (let-values ([(in out) (tcp-accept tcp-listener)])
         (if ssl-server-context 
             (ports->ssl-ports in out 
                               #:mode 'accept
@@ -364,9 +359,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             [port (ftp-host&port-port active-host&port)])
         (parameterize ([current-custodian current-process])
           (thread (λ ()
-                    (with-handlers ([any/c (λ (e) (print-abort))])
-                      (let-values ([(in out) (net-connect host port)])
+                    (with-handlers ([any/c (λ (e) #|(displayln e)|# (print-abort))])
+                      (let-values ([(in out) (tcp-connect host port)])
                         (print-connect)
+                        (when ssl-client-context
+                          (set!-values (in out) 
+                                       (ports->ssl-ports in out 
+                                                         #:mode 'connect
+                                                         #:context ssl-client-context)))
                         (let-values ([(reset-alarm kill-alarm)
                                       (alarm-clock 1 15
                                                    (λ() (custodian-shutdown-all current-process)))])
@@ -396,6 +396,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (with-handlers ([any/c (λ (e) (print-abort))])
                     (let-values ([(in out) (net-accept pasv-listener)])
                       (print-connect)
+                      (when ssl-client-context
+                        (set!-values (in out) 
+                                     (ports->ssl-ports in out 
+                                                       #:mode 'connect
+                                                       #:context ssl-client-context)))
                       (let-values ([(reset-alarm kill-alarm)
                                     (alarm-clock 1 15
                                                  (λ() (custodian-shutdown-all current-process)))])
@@ -437,7 +442,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (unless (file-exists? (string-append new-file-full-path ftp-vfs-file-spath))
                             (ftp-mksys-file (string-append new-file-full-path ftp-vfs-file-spath)
                                             (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
-                          (let-values ([(in out) (net-connect host port)])
+                          (let-values ([(in out) (tcp-connect host port)])
                             (print-connect)
                             (when restart-marker
                               (file-position fout restart-marker)
@@ -569,11 +574,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (handle-client-request listener transfer-wait-time)
+    (define/public (handle-client-request tcp-listener transfer-wait-time)
       (let ([cust (make-custodian)])
-        (with-handlers ([any/c (λ(e) (custodian-shutdown-all cust))])
+        (with-handlers ([any/c (λ(e) #|(displayln e)|# (custodian-shutdown-all cust))])
           (parameterize ([current-custodian cust])
-            (set!-values (*client-input-port* *client-output-port*) (net-accept listener))
+            (set!-values (*client-input-port* *client-output-port*) (net-accept tcp-listener))
             (let-values ([(server-host client-host) (net-addresses *client-input-port*)])
               (set! *client-host* client-host)
               (set! *current-protocol* (if (IPv4? server-host) '|1| '|2|))
@@ -1912,9 +1917,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
                                (ssl-load-private-key! ctx server-1-certificate #t #f default-locale-encoding)
                                ctx))]
-                   [listener (if ssl-server-ctx
-                                 (ssl-listen server-1-port (random 123456789) #t server-1-host ssl-server-ctx)
-                                 (tcp-listen server-1-port max-allow-wait #t server-1-host))])
+                   [tcp-listener (tcp-listen server-1-port max-allow-wait #t server-1-host)])
               (letrec ([main-loop (λ ()
                                     (send (new ftp-session%
                                                [current-server 1]
@@ -1924,7 +1927,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                [disable-commands disable-ftp-commands]
                                                [random-gen random-1-gen]
                                                [welcome-message welcome-message])
-                                          handle-client-request listener transfer-wait-time)
+                                          handle-client-request tcp-listener transfer-wait-time)
                                     (main-loop))])
                 (set! server-1-thread (thread main-loop)))))
           (when (and server-2-host server-2-port)
@@ -1940,9 +1943,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
                                (ssl-load-private-key! ctx server-2-certificate #t #f default-locale-encoding)
                                ctx))]
-                   [listener (if ssl-server-ctx
-                                 (ssl-listen server-2-port (random 123456789) #t server-2-host ssl-server-ctx)
-                                 (tcp-listen server-2-port max-allow-wait #t server-2-host))])
+                   [tcp-listener (tcp-listen server-2-port max-allow-wait #t server-2-host)])
               (letrec ([main-loop (λ ()
                                     (send (new ftp-session%
                                                [current-server 2]
@@ -1952,9 +1953,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                [disable-commands disable-ftp-commands]
                                                [random-gen random-2-gen]
                                                [welcome-message welcome-message])
-                                          handle-client-request listener transfer-wait-time)
+                                          handle-client-request tcp-listener transfer-wait-time)
                                     (main-loop))])
-                (set! server-1-thread (thread main-loop))))))
+                (set! server-2-thread (thread main-loop))))))
         (set! state 'running)))
     
     (define/public (stop)
