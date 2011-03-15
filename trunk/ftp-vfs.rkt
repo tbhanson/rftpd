@@ -1,4 +1,8 @@
 #|
+
+RFTPd VFS Library v1.0.1
+----------------------------------------------------------------------
+
 Summary:
 This file is part of Racket FTP Server.
 
@@ -105,7 +109,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (and (hash-ref groups group #f)
            (hash-ref (hash-ref groups group) (ftp-user-login user) #f))))
 
-(define (ftp-allow-read? full-ftp-sys-file-spath user groups)
+(define (ftp-vfs-obj-allow-read? full-ftp-sys-file-spath user groups)
   (let ([info (ftp-file-or-dir-full-info full-ftp-sys-file-spath)])
     (or (cond
           ((string=? (vector-ref info 1) (ftp-user-login user))
@@ -116,7 +120,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (bitwise-bit-set? (vector-ref info 0) 2)))
         (member-ftp-group? groups user "root"))))
 
-(define (ftp-allow-write? full-ftp-sys-file-spath user groups)
+(define (ftp-vfs-obj-allow-write? full-ftp-sys-file-spath user groups)
   (let ([info (ftp-file-or-dir-full-info full-ftp-sys-file-spath)])
     (or (cond
           ((string=? (vector-ref info 1) (ftp-user-login user))
@@ -127,7 +131,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (bitwise-bit-set? (vector-ref info 0) 1)))
         (member-ftp-group? groups user "root"))))
 
-(define (ftp-allow-execute? full-ftp-sys-file-spath user groups)
+(define (ftp-vfs-obj-allow-execute? full-ftp-sys-file-spath user groups)
   (let ([info (ftp-file-or-dir-full-info full-ftp-sys-file-spath)])
     (or (cond
           ((string=? (vector-ref info 1) (ftp-user-login user))
@@ -138,35 +142,35 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (bitwise-bit-set? (vector-ref info 0) 0)))
         (member-ftp-group? groups user "root"))))
 
-(define (ftp-access-allow? ftp-root-dir 
-                           ftp-full-spath 
-                           user 
-                           groups
-                           [drop-tail-elem 0])
+(define (ftp-vfs-obj-access-allow? ftp-root-dir 
+                                   ftp-full-spath 
+                                   user 
+                                   groups
+                                   [drop-tail-elem 0])
   (letrec ([test
             (λ(curr dirlist)
               (if (null? dirlist)
                   #t
                   (let ([dir (string-append curr "/" (car dirlist))])
-                    (and (ftp-allow-execute? (string-append dir ftp-vfs-dir-spath) user groups)
+                    (and (ftp-vfs-obj-allow-execute? (string-append dir ftp-vfs-dir-spath) user groups)
                          (test dir (cdr dirlist))))))])
     (let ([dirs (filter (λ (s) (not (string=? s "")))
                         (regexp-split #rx"[/\\\\]+" (simplify-path ftp-full-spath #f)))])
-      (and (ftp-allow-execute? (string-append ftp-root-dir ftp-vfs-dir-spath) user groups)
+      (and (ftp-vfs-obj-allow-execute? (string-append ftp-root-dir ftp-vfs-dir-spath) user groups)
            (or (null? dirs)
                (test ftp-root-dir (drop-right dirs drop-tail-elem)))))))
 
 (define (ftp-dir-allow-read? spath user groups)
-  (ftp-allow-read? (string-append spath ftp-vfs-dir-spath) user groups))
+  (ftp-vfs-obj-allow-read? (string-append spath ftp-vfs-dir-spath) user groups))
 
 (define (ftp-dir-allow-write? spath user groups)
-  (ftp-allow-write? (string-append spath ftp-vfs-dir-spath) user groups))
+  (ftp-vfs-obj-allow-write? (string-append spath ftp-vfs-dir-spath) user groups))
 
 (define (ftp-dir-allow-execute? spath user groups)
-  (ftp-allow-execute? (string-append spath ftp-vfs-dir-spath) user groups))
+  (ftp-vfs-obj-allow-execute? (string-append spath ftp-vfs-dir-spath) user groups))
 
 (define (ftp-file-allow-read? spath user groups)
-  (ftp-allow-read? (string-append spath ftp-vfs-file-spath) user groups))
+  (ftp-vfs-obj-allow-read? (string-append spath ftp-vfs-file-spath) user groups))
 
 (define (ftp-file-allow-write? spath user groups)
-  (ftp-allow-write? (string-append spath ftp-vfs-file-spath) user groups))
+  (ftp-vfs-obj-allow-write? (string-append spath ftp-vfs-file-spath) user groups))
