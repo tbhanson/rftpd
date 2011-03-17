@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.4.1
+Racket FTP Server Library v1.4.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -332,7 +332,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [print-connect (λ() #f)]
                 [print-close (λ() #f)]
                 [print-ascii (λ(data out) #f)]
-                [log-file-event (λ(new-file-full-path exists-mode) #f)])
+                [log-store-event (λ(new-file-full-path exists-mode) #f)]
+                [log-copy-event (λ(file-full-path) #f)])
     
     (super-new [default-encoding default-locale-encoding])
     
@@ -385,6 +386,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                  (write-bytes data out))))
                           (kill-alarm))
                         (flush-output out)
+                        (when file? (log-copy-event data))
                         ;(close-input-port in);ssl required
                         ;(close-output-port out);ssl required
                         (print-close)))
@@ -396,11 +398,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (with-handlers ([any/c (λ (e) (print-abort))])
                     (let-values ([(in out) (net-accept pasv-listener)])
                       (print-connect)
-                      (when ssl-client-context
-                        (set!-values (in out) 
-                                     (ports->ssl-ports in out 
-                                                       #:mode 'connect
-                                                       #:context ssl-client-context)))
                       (let-values ([(reset-alarm kill-alarm)
                                     (alarm-clock 1 15
                                                  (λ() (custodian-shutdown-all current-process)))])
@@ -420,6 +417,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                         (kill-alarm))
                       ;(flush-output out)
                       (close-output-port out);ssl required
+                      (when file? (log-copy-event data))
                       (print-close)))
                   (custodian-shutdown-all current-process)))))
     
@@ -444,6 +442,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                             (ftp-user-login current-ftp-user) (ftp-user-group current-ftp-user)))
                           (let-values ([(in out) (tcp-connect host port)])
                             (print-connect)
+                            (when ssl-client-context
+                              (set!-values (in out) 
+                                           (ports->ssl-ports in out 
+                                                             #:mode 'connect
+                                                             #:context ssl-client-context)))
                             (when restart-marker
                               (file-position fout restart-marker)
                               (set! restart-marker #f))
@@ -457,7 +460,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                   (loop (read-bytes 1048576 in))))
                               (kill-alarm))
                             (flush-output fout)
-                            (log-file-event new-file-full-path exists-mode)
+                            (log-store-event new-file-full-path exists-mode)
                             (print-close)))
                         #:mode 'binary
                         #:exists exists-mode))
@@ -487,7 +490,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (loop (read-bytes 1048576 in))))
                             (kill-alarm))
                           (flush-output fout)
-                          (log-file-event new-file-full-path exists-mode)
+                          (log-store-event new-file-full-path exists-mode)
                           (print-close)))
                       #:mode 'binary
                       #:exists exists-mode))
@@ -543,11 +546,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                [print-connect (λ() (print-crlf/encoding** 'OPEN-DATA-CONNECTION representation-type))]
                [print-close (λ() (print-crlf/encoding** 'TRANSFER-OK))]
                [print-ascii (λ(data out) (print/encoding *locale-encoding* data out))]
-               [log-file-event (λ(new-file-full-path exists-mode)
+               [log-store-event (λ(new-file-full-path exists-mode)
+                                  (print-log-event
+                                   (format "~a data to file ~a"
+                                           (if (eq? exists-mode 'append) "Append" "Store")
+                                           (real-path->ftp-path new-file-full-path *root-dir*))))]
+               [log-copy-event (λ(file-full-path)
                                  (print-log-event
-                                  (format "~a data to file ~a"
-                                          (if (eq? exists-mode 'append) "Append" "Store")
-                                          (real-path->ftp-path new-file-full-path *root-dir*))))])
+                                  (string-append "Transfer a copy of the file "
+                                                 (real-path->ftp-path file-full-path *root-dir*))))])
     ;;
     ;; ---------- Private Definitions ----------
     ;;
