@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.4.3
+Racket FTP Server Library v1.4.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -532,7 +532,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                            (real-path->ftp-path new-file-full-path *root-dir*))))]
                [log-copy-event (λ(file-full-path)
                                  (print-log-event
-                                  (string-append "Transfer a copy of the file "
+                                  (string-append "Read file "
                                                  (real-path->ftp-path file-full-path *root-dir*))))])
     ;;
     ;; ---------- Private Definitions ----------
