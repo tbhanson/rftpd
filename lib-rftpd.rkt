@@ -1163,7 +1163,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 [gid (vector-ref info 2)])
                            (if (and (userinfo/login owner)
                                     (or (member-ftp-group/gid? *userstruct* root-gid)
-                                        (string=? owner (ftp-user-login *userstruct*))))
+                                        (string=? owner *login*)))
                                (begin
                                  (ftp-mksysfile (string-append full-path target)
                                                 (login->uid owner) gid perm)
@@ -1318,6 +1318,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                ((Image) (string->bytes/encoding *locale-encoding* dirlist)))))
                         (print-crlf/encoding** 'PERM-DENIED))
                     (print-crlf/encoding** 'DIR-NOT-FOUND)))]
+        
         (if params
             (let* ([spath (build-ftp-spath* params)]
                    [path (string-append *root-dir* spath)])
