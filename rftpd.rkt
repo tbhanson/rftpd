@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.2.3
+Racket FTP Server v1.2.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -73,7 +73,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.2.3 <development>"]
+    (init-field [server-name&version        "Racket FTP Server v1.2.4 <development>"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -82,7 +82,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [show-banner?               #f]
                 [echo?                      #f]
                 
-                [server-1-host              "127.0.0.1"]
+                [server-1-host              #f]
                 [server-1-port              21]
                 [server-1-encryption        #f]
                 [server-1-certificate       (os-build-rtm-path "certs/server-1.pem")]
@@ -403,24 +403,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (cdr conf))))))))
     
     (define/private (load-users)
-      (with-handlers ([any/c void])
+      (with-handlers ([any/c #|displayln|# void])
         (call-with-input-file users-file
           (λ (in)
             (let ([conf (read in)])
               (when (eq? (car conf) 'ftp-server-users)
                 (for-each (λ (user)
-                            (send server add-ftp-user
-                                  (car user) (second user) (third user) (fourth user) (fifth user) (sixth user)))
+                            (send server useradd
+                                  (car user) (second user) (third user) 
+                                  (fourth user) (fifth user) (sixth user) (seventh user)))
                           (cdr conf))))))))
     
     (define/private (load-groups)
-      (with-handlers ([any/c void])
+      (with-handlers ([any/c #|displayln|# void])
         (call-with-input-file groups-file
           (λ (in)
             (let ([conf (read in)])
               (when (eq? (car conf) 'ftp-server-groups)
                 (for-each (λ (group)
-                            (send server add-ftp-group (car group) (cdr group)))
+                            (send server groupadd (car group) (cadr group) (cddr group)))
                           (cdr conf))))))))
     
     (define/private (init)
