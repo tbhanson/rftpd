@@ -22,6 +22,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #lang racket
 
+(require (file "lib-string.rkt"))
+
 (provide (all-defined-out))
 
 (define-syntax (and/exc stx)
@@ -29,28 +31,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     [(_ expr ...)
      #'(with-handlers ([any/c (λ (e) #f)])
          (and expr ...))]))
-
-(define (string-split chlst str [start 0][end (string-length str)])
-  (let loop [(i start)]
-    (cond 
-      [(= i end)
-       (list (substring str start))]
-      [(memq (string-ref str i) chlst)
-       (cons (substring str start i) 
-             (string-split chlst str (add1 i) end))]
-      [else
-       (loop (add1 i))])))
-
-(define (string-split-char char str [start 0][end (string-length str)])
-  (let loop [(i start)]
-    (cond 
-      [(= i end)
-       (list (substring str start))]
-      [(eq? (string-ref str i) char)
-       (cons (substring str start i) 
-             (string-split-char char str (add1 i) end))]
-      [else
-       (loop (add1 i))])))
 
 (define (IPv4? ip)
   (and/exc (let ([l (string-split-char #\. ip)])

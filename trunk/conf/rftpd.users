@@ -1,7 +1,6 @@
 (ftp-server-users
-;   Full Name      | Login     | Password   | Default Group | Default Dirs | Root Dir
-  ["admin"          "root"      "1234"       "root"          ("/")          "ftp-vfs"]
-  ["anonymous user" "anonymous" ""           "anonymous"     ("/")          "ftp-vfs/anonymous-root-dir"]
-  ["anonymous user" "ftp"       ""           "anonymous"     ("/")          "ftp-vfs/anonymous-root-dir"]
-  ["sample user"    "usr"       "usr"        "racket"        ("/home")      "ftp-vfs/user-dir"]
+;   Login     | Password |  UID  |  GID  | Root Dir            | Home Dirs |    Info
+  ["anonymous" ""          1000     100   "anonymous-root-dir"  ("/")        "anonymous user" ]
+  ["ftp"       ""          1001     100   "anonymous-root-dir"  ("/")        "anonymous user"]
+  ["usr"       "usr"       1002     200   "user-dir"            ("/home")    "sample user"]
 )
