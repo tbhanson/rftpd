@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.2.4
+Racket FTP Server v1.2.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -27,10 +27,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #lang racket
 
 (require ffi/unsafe
+         racket/date
          (file "lib-ssl.rkt")
          (prefix-in ftp: (file "lib-rftpd.rkt")))
 
 (define-for-syntax DrRacket-DEBUG? #t)
+
+(date-display-format 'iso-8601)
+
+(define-syntax-rule (format-file-name spath)
+  (regexp-replace #rx"\\*" spath (date->string (current-date))))
 
 (define-syntax (if-drdebug so)
   (syntax-case so ()
@@ -73,7 +79,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.2.4 <development>"]
+    (init-field [server-name&version        "Racket FTP Server v1.2.5 <development>"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -113,7 +119,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [default-locale-encoding    "UTF-8"]
                 [default-root-dir           "ftp-dir"]
                 
-                [log-file                   (os-build-rtm-path "logs/rftpd.log")]
+                [log-file                   (os-build-rtm-path (format-file-name "logs/rftpd.log"))]
                 
                 [config-file                (os-build-rtm-path "conf/rftpd.conf")]
                 [users-file                 (os-build-rtm-path "conf/rftpd.users")]
@@ -399,7 +405,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                (set! default-root-dir (second param)))
                               ((log-file)
                                (when log-out (close-output-port log-out))
-                               (set! log-out (open-output-file (build-rtm-path (second param)) #:exists 'append)))))
+                               (set! log-out (open-output-file 
+                                              (build-rtm-path (format-file-name (second param))) 
+                                              #:exists 'append)))))
                           (cdr conf))))))))
     
     (define/private (load-users)
