@@ -2,5 +2,4 @@
 ;   Login     | Password |  UID  |  GID  | Root Dir            | Home Dirs |    Info
   ["anonymous" ""          1000     100   "anonymous-root-dir"  ("/")        "anonymous user" ]
   ["ftp"       ""          1001     100   "anonymous-root-dir"  ("/")        "anonymous user"]
-  ["usr"       "usr"       1002     200   "user-dir"            ("/home")    "sample user"]
-)
+  ["usr"       "usr"       1002     200   "user-dir"            ("/home")    "sample user"])
