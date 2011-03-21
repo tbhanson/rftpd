@@ -1,5 +1,6 @@
 (ftp-server-users
-;   Login     | Password |  UID  |  GID  | Root Dir            | Home Dirs |    Info
-  ["anonymous" ""          1000     100   "anonymous-root-dir"  ("/")        "anonymous user" ]
-  ["ftp"       ""          1001     100   "anonymous-root-dir"  ("/")        "anonymous user"]
-  ["usr"       "usr"       1002     200   "user-dir"            ("/home")    "sample user"])
+;   Login     | Password |  UID  |  GID  |           Root Dir          | Home Dirs |    Info
+  ["root"      "1234"         0       0   "ftp-vfs"                     ("/")        "admin"]
+  ["anonymous" ""          1000     100   "ftp-vfs/anonymous-root-dir"  ("/")        "anonymous user"]
+  ["ftp"       ""          1001     100   "ftp-vfs/anonymous-root-dir"  ("/")        "anonymous user"]
+  ["usr"       "usr"       1002     200   "ftp-vfs/user-dir"            ("/home")    "sample user"])
