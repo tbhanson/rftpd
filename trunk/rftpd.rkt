@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.2.5
+Racket FTP Server v1.2.6
 ----------------------------------------------------------------------
 
 Summary:
@@ -28,20 +28,33 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (require ffi/unsafe
          racket/date
+         (file "debug.rkt")
          (file "lib-ssl.rkt")
+         (file "utils.rkt")
          (prefix-in ftp: (file "lib-rftpd.rkt")))
-
-(define-for-syntax DrRacket-DEBUG? #t)
 
 (date-display-format 'iso-8601)
 
+(struct ftp-srv-params
+  (welcome-message
+   host
+   port
+   encryption 
+   certificate 
+   max-allow-wait
+   transfer-wait-time
+   bad-auth-sleep-sec
+   max-auth-attempts 
+   passwd-sleep-sec 
+   disable-ftp-commands
+   passive-host&ports 
+   default-root-dir
+   log-file
+   users-file
+   groups-file))
+
 (define-syntax-rule (format-file-name spath)
   (regexp-replace #rx"\\*" spath (date->string (current-date))))
-
-(define-syntax (if-drdebug so)
-  (syntax-case so ()
-    [(_ exp1 exp2)
-     (if DrRacket-DEBUG? #'exp1 #'exp2)]))
 
 (define-values (ShowConsole HideConsole)
   (case (system-type) 
@@ -79,7 +92,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.2.5 <development>"]
+    (init-field [server-name&version        "Racket FTP Server v1.2.6 <development>"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -88,95 +101,67 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [show-banner?               #f]
                 [echo?                      #f]
                 
-                [server-1-host              #f]
-                [server-1-port              21]
-                [server-1-encryption        #f]
-                [server-1-certificate       (os-build-rtm-path "certs/server-1.pem")]
-                
-                [server-2-host              #f]
-                [server-2-port              21]
-                [server-2-encryption        #f]
-                [server-2-certificate       (os-build-rtm-path "certs/server-2.pem")]
-                
-                [server-max-allow-wait      25]
-                [server-transfer-wait-time  120]
-                
-                [server-bad-auth-sleep-sec  60]
-                [server-max-auth-attempts   5]
-                [server-passwd-sleep-sec    0]
-                
-                [disable-ftp-commands       null]
-                
-                [passive-1-host&ports       (ftp:make-passive-host&ports "127.0.0.1" 40000 40999)]
-                [passive-2-host&ports       (ftp:make-passive-host&ports "127.0.0.1" 40000 40999)]
-                
                 [control-passwd             "12345"]
                 [control-host               "127.0.0.1"]
                 [control-port               41234]
                 [control-encryption         'sslv3]
                 [control-certificate        (os-build-rtm-path "certs/control.pem")]
-                
-                [default-locale-encoding    "UTF-8"]
-                [default-root-dir           "ftp-dir"]
-                
-                [log-file                   (os-build-rtm-path (format-file-name "logs/rftpd.log"))]
+                [bad-admin-auth-sleep-sec   120]
+                [max-admin-passwd-attempts  5]
                 
                 [config-file                (os-build-rtm-path "conf/rftpd.conf")]
-                [users-file                 (os-build-rtm-path "conf/rftpd.users")]
-                [groups-file                (os-build-rtm-path "conf/rftpd.groups")]
                 
-                [bad-admin-auth-sleep-sec   120]
-                [max-admin-passwd-attempts  5])
+                [default-locale-encoding    "UTF-8"])
     
-    (define log-out #f)
-    (define server #f)
     (define bad-admin-auth (cons 0 0)) ; (cons attempts time) 
+    (define ftp-servers-params (make-hash))
+    (define ftp-servers #f)
     ;;
     ;; ---------- Public Methods ----------
     ;;
     (define/public (main)
       (let ([shutdown? #f]
             [start? #f]
-            [pause?  #f]
+            [stop?  #f]
             [restart? #f]
             [cust (make-custodian)])
         (with-handlers ([exn:fail:network? 
                          (λ(e)
                            (when (or start? restart?
                                      (equal? (current-command-line-arguments) #()))
-                             (start-server)))]
+                             (start-servers)))]
                         [any/c void])
           (when read-cmd-line?
             (command-line
              #:program "rftpd"
              #:once-any
              [("-r" "--start")
-              "Start server"
+              "Start all servers."
               (set! start? #t)]
-             [("-p" "--pause")
-              "Pause server"
-              (set! pause? #t)]
+             [("-p" "--stop")
+              "Stop all servers."
+              (set! stop? #t)]
              [("-t" "--restart")
-              "Restart server"
+              "Restart all server."
               (set! restart? #t)]
-             [("-s" "--stop" "-x" "--exit")
-              "Shutdown server"  
+             [("-s" "--shutdown" "-x" "--exit")
+              "Shutdown RFTPd server."  
               (set! shutdown? #t)]
              #:once-each
              [("-i" "--interactive")
-              "Start a RFTPd Remote Control Interface in interactive mode"  
+              "Start a RFTPd Remote Control Interface in interactive mode."  
               (set! ci-interactive? #t)]
              [("-v" "--version")
-              "Shows version and copyright" 
+              "Shows version and copyright." 
               (set! show-banner? #t)]
              [("-e" "--echo")
-              "Show echo"
+              "Show echo."
               (set! echo? #t)]))
           (unless (or show-banner? echo? ci-interactive?) 
             (HideConsole))
           (when show-banner?
             (display-lines (list server-name&version copyright "")))
-          (init)
+          (load-config config-file)
           (parameterize ([current-custodian cust])
             (let*-values ([(ssl-ctx) (let ([ctx (ssl-make-client-context control-encryption)])
                                        (ssl-load-certificate-chain! ctx control-certificate default-locale-encoding)
@@ -193,14 +178,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (start?
                      (request "%start")
                      (request "%bye"))
-                    (pause?
+                    (stop?
                      (request "%pause")
                      (request "%bye"))
                     (restart?
                      (request "%restart")
                      (request "%bye"))
                     (shutdown?
-                     (request "%exit")
+                     (request "%shutdown")
                      (request "%bye"))
                     (else
                      (when ci-interactive?
@@ -210,11 +195,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          (let ([cmd (read)])
                            (case cmd
                              ((help ?)
-                              (display-lines '("%start   - start server."
-                                               "%pause   - pause server."
-                                               "%restart - restart server."
-                                               "%exit    - shutdown server."
-                                               "%bye     - close session."))
+                              (display-lines '("(%start ID)   - start ID server."
+                                               "(%pause ID)   - stop ID server."
+                                               "(%stop ID)    - stop ID server."
+                                               "(%restart ID) - restart ID server."
+                                               "%start        - start all servers."
+                                               "%pause        - stop all servers."
+                                               "%stop         - stop all servers."
+                                               "%restart      - restart all servers."
+                                               "%shutdown     - shutdown RFTPd server."
+                                               "%bye          - close session."))
                               (loop))
                              (else
                               (request cmd)
@@ -224,51 +214,56 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Private Methods ----------
     ;;
-    (define/private (start-server)
-      (set! server (new ftp:ftp-server% 
-                        [welcome-message server-name&version]
-                        [server-1-host server-1-host]
-                        [server-1-port server-1-port]
-                        [server-1-encryption server-1-encryption]
-                        [server-1-certificate server-1-certificate]
-                        [server-2-host server-2-host]
-                        [server-2-port server-2-port]
-                        [server-2-encryption server-2-encryption]
-                        [server-2-certificate server-2-certificate]
-                        [max-allow-wait server-max-allow-wait]
-                        [transfer-wait-time server-transfer-wait-time]
-                        [bad-auth-sleep-sec server-bad-auth-sleep-sec]
-                        [max-auth-attempts server-max-auth-attempts]
-                        [pass-sleep-sec server-passwd-sleep-sec]
-                        [disable-ftp-commands disable-ftp-commands]
-                        [passive-1-host&ports passive-1-host&ports]
-                        [passive-2-host&ports passive-2-host&ports]
-                        [default-root-dir default-root-dir]
-                        [default-locale-encoding default-locale-encoding]
-                        [log-output-port log-out]))
-      (load-users)
-      (load-groups)
-      (start!)
+    (define/private (start-servers)
+      (set! ftp-servers (make-hash))
+      (hash-for-each
+       ftp-servers-params
+       (λ (id params)
+         (let ([srv (new ftp:ftp-server%
+                         [welcome-message         (ftp-srv-params-welcome-message params)]
+                         
+                         [server-host             (ftp-srv-params-host params)]
+                         [server-port             (ftp-srv-params-port params)]
+                         [server-encryption       (ftp-srv-params-encryption params)]
+                         [server-certificate      (ftp-srv-params-certificate params)]
+                         
+                         [max-allow-wait          (ftp-srv-params-max-allow-wait params)]
+                         [transfer-wait-time      (ftp-srv-params-transfer-wait-time params)]
+                         
+                         [bad-auth-sleep-sec      (ftp-srv-params-bad-auth-sleep-sec params)]
+                         [max-auth-attempts       (ftp-srv-params-max-auth-attempts params)]
+                         [pass-sleep-sec          (ftp-srv-params-passwd-sleep-sec params)]
+                         
+                         [disable-ftp-commands    (ftp-srv-params-disable-ftp-commands params)]
+                         
+                         [pasv-host&ports         (ftp-srv-params-passive-host&ports params)]
+                         
+                         [default-root-dir        (ftp-srv-params-default-root-dir params)]
+                         [default-locale-encoding default-locale-encoding]
+                         [log-file                (ftp-srv-params-log-file params)])])
+           (hash-set! ftp-servers id srv)
+           (load-users srv (ftp-srv-params-users-file params))
+           (load-groups srv (ftp-srv-params-groups-file params))
+           (start! id srv))))
       (thread-wait (server-control)))
     
     (define/private (server-control)
-      (let ([cust (make-custodian)])
-        (parameterize ([current-custodian cust])
-          (let ([listener (ssl-listen control-port (random 123456789) #t control-host control-encryption)])
-            (ssl-load-certificate-chain! listener control-certificate default-locale-encoding)
-            (ssl-load-private-key! listener control-certificate #t #f default-locale-encoding)
-            (letrec ([main-loop (λ ()
-                                  (handle-client-request listener)
-                                  (main-loop))])
-              (thread main-loop))))))
+      (let ([listener (ssl-listen control-port (random 123456789) #t control-host control-encryption)])
+        (ssl-load-certificate-chain! listener control-certificate default-locale-encoding)
+        (ssl-load-private-key! listener control-certificate #t #f default-locale-encoding)
+        (letrec ([main-loop (λ ()
+                              (handle-client-request listener)
+                              (main-loop))])
+          (thread main-loop))))
     
     (define/private (handle-client-request listener)
-      (let-values ([(in out) (ssl-accept listener)])
-        (thread (λ ()
-                  (with-handlers ([any/c #|displayln|# void])
-                    (eval-cmd in out)
-                    (close-input-port in)
-                    (close-output-port out))))))
+      (let ([cust (make-custodian)])
+        (parameterize ([current-custodian cust])
+          (let-values ([(in out) (ssl-accept listener)])
+            (thread (λ ()
+                      (with-handlers ([any/c debug/handler])
+                        (eval-cmd in out))
+                      (custodian-shutdown-all cust)))))))
     
     (define/private (eval-cmd input-port output-port)
       (let ([pass (read-line input-port)])
@@ -283,135 +278,185 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (set! bad-admin-auth (cons 0 0))
               (response "Ok")
               (let next ([cmd (read input-port)])
-                (cond
-                  ((eof-object? cmd))
-                  ((eq? cmd '%bye)
-                   (response "Ok"))
-                  ((eq? cmd '%exit)
-                   (pause!)
-                   (close-output-port log-out)
-                   (response "Ok")
-                   (exit))
-                  ((eq? cmd '%start)
-                   (start!)
-                   (response "Ok")
-                   (next (read input-port)))
-                  ((eq? cmd '%pause)
-                   (flush-output log-out)
-                   (pause!)
-                   (response "Ok")
-                   (next (read input-port)))
-                  ((eq? cmd '%restart)
-                   (flush-output log-out)
-                   (pause!)
-                   (start!)
-                   (response "Ok")
-                   (next (read input-port)))
-                  (else
-                   (response "Command '~a' not implemented.\n" cmd)
-                   (next (read input-port))))))
+                (unless (eof-object? cmd)
+                  (match cmd
+                    ['%bye 
+                     (response "Ok")]
+                    ['%start 
+                     (start!-all)
+                     (response "Ok")
+                     (next (read input-port))]
+                    [(or '%stop '%pause)
+                     (stop!-all)
+                     (response "Ok")
+                     (next (read input-port))]
+                    ['%restart 
+                     (stop!-all)
+                     (start!-all)
+                     (response "Ok")
+                     (next (read input-port))]
+                    [(or '%shutdown '%exit)
+                     (stop!-all)
+                     (response "Ok")
+                     (exit)]
+                    [`(%start ,id)
+                     (if (hash-ref ftp-servers id #f)
+                         (begin
+                           (start! id (hash-ref ftp-servers id))
+                           (response "Ok"))
+                         (response "Server ID not found."))
+                     (next (read input-port))]
+                    [(or `(%pause ,id) `(%stop ,id))
+                     (if (hash-ref ftp-servers id #f)
+                         (begin
+                           (stop! id (hash-ref ftp-servers id))
+                           (response "Ok"))
+                         (response "Server ID not found."))
+                     (response "Ok")
+                     (next (read input-port))]
+                    [`(%restart ,id)
+                     (if (hash-ref ftp-servers id #f)
+                         (begin
+                           (stop! id (hash-ref ftp-servers id))
+                           (start! id (hash-ref ftp-servers id))
+                           (response "Ok"))
+                         (response "Server ID not found."))
+                     (response "Ok")
+                     (next (read input-port))]
+                    [_
+                     (if (and (pair? cmd) (list? cmd))
+                         (if (memq (car cmd) '(%start %stop %pause %restart))
+                             (response "Syntax error.")
+                             (response "Command '~a' not implemented." (car cmd)))
+                         (response "Command '~a' not implemented." cmd))
+                     (next (read input-port))]))))
             (set! bad-admin-auth (cons (add1 (car bad-admin-auth))
                                        (current-seconds))))))
     
-    (define/private (start!)
+    (define/private (start! id server)
       (send server start)
-      (when echo? (displayln (format "Server ~a!" (send server status)))))
+      (when echo? (displayln (format "Server ~a: ~a!" id (send server status)))))
     
-    (define/private (pause!)
+    (define/private (stop! id server)
       (send server stop)
-      (when echo? (displayln (format "Server ~a!" (send server status)))))
+      (when echo? (displayln (format "Server ~a: ~a!" id (send server status)))))
     
-    (define/private (load-config)
-      (with-handlers ([any/c void])
+    (define/private (start!-all)
+      (hash-for-each ftp-servers (λ (id srv) (start! id srv))))
+    
+    (define/private (stop!-all)
+      (hash-for-each ftp-servers (λ (id srv) (stop! id srv))))
+    
+    (define/private (load-config config-file)
+      (with-handlers ([any/c debug/handler])
         (call-with-input-file config-file
           (λ (in)
             (let ([conf (read in)])
               (when (eq? (car conf) 'ftp-server-config)
-                (for-each (λ (param)
-                            (case (car param)
-                              ((server-1)
-                               (for-each (λ (param)
-                                           (with-handlers ([any/c void])
-                                             (case (car param)
-                                               ((host&port)
-                                                (set! server-1-host 
-                                                      (and (ftp:host-string? (second param)) (second param)))
-                                                (set! server-1-port 
-                                                      (and (ftp:port-number? (third param)) (third param))))
-                                               ((ssl-protocol&certificate)
-                                                (set! server-1-encryption 
-                                                      (and (ftp:ssl-protocol? (second param)) (second param)))
-                                                (set! server-1-certificate (build-rtm-path (third param))))
-                                               ((passive-host&ports)
-                                                (set! passive-1-host&ports 
-                                                      (ftp:make-passive-host&ports (second param) 
-                                                                                   (third param)
-                                                                                   (fourth param)))))))
-                                         (cdr param)))
-                              ((server-2)
-                               (for-each (λ (param)
-                                           (with-handlers ([any/c void])
-                                             (case (car param)
-                                               ((host&port)
-                                                (set! server-2-host 
-                                                      (and (ftp:host-string? (second param)) (second param)))
-                                                (set! server-2-port 
-                                                      (and (ftp:port-number? (third param)) (third param))))
-                                               ((ssl-protocol&certificate)
-                                                (set! server-2-encryption 
-                                                      (and (ftp:ssl-protocol? (second param)) (second param)))
-                                                (set! server-2-certificate (build-rtm-path (third param))))
-                                               ((passive-host&ports)
-                                                (set! passive-2-host&ports 
-                                                      (ftp:make-passive-host&ports (second param) 
-                                                                                   (third param)
-                                                                                   (fourth param)))))))
-                                         (cdr param)))
-                              ((control-server)
-                               (for-each (λ (param)
-                                           (with-handlers ([any/c void])
-                                             (case (car param)
-                                               ((host&port)
-                                                (set! control-host 
-                                                      (and (ftp:host-string? (second param)) (second param)))
-                                                (set! control-port 
-                                                      (and (ftp:port-number? (third param)) (third param))))
-                                               ((ssl-protocol&certificate)
-                                                (set! control-encryption 
-                                                      (and (ftp:ssl-protocol? (second param)) (second param)))
-                                                (set! control-certificate (build-rtm-path (third param))))
-                                               ((passwd)
-                                                (set! control-passwd (second param)))
-                                               ((bad-admin-auth-sleep-sec)
-                                                (set! bad-admin-auth-sleep-sec (second param)))
-                                               ((max-admin-passwd-attempts)
-                                                (set! max-admin-passwd-attempts (second param))))))
-                                         (cdr param)))
-                              ((max-allow-wait)
-                               (set! server-max-allow-wait (second param)))
-                              ((transfer-wait-time)
-                               (set! server-transfer-wait-time (second param)))
-                              ((bad-auth-sleep-sec)
-                               (set! server-bad-auth-sleep-sec (second param)))
-                              ((max-auth-attempts)
-                               (set! server-max-auth-attempts (second param)))
-                              ((passwd-sleep-sec)
-                               (set! server-passwd-sleep-sec (second param)))
-                              ((disable-ftp-commands)
-                               (set! disable-ftp-commands (second param)))
-                              ((default-locale-encoding)
-                               (set! default-locale-encoding (second param)))
-                              ((default-root-dir)
-                               (set! default-root-dir (second param)))
-                              ((log-file)
-                               (when log-out (close-output-port log-out))
-                               (set! log-out (open-output-file 
-                                              (build-rtm-path (format-file-name (second param))) 
-                                              #:exists 'append)))))
-                          (cdr conf))))))))
+                (for-each 
+                 (λ (param)
+                   (case (car param)
+                     [(server)
+                      (with-handlers ([any/c debug/handler])
+                        (let ([id                    #f]
+                              [welcome-message       server-name&version]
+                              [host                  #f]
+                              [port                  21]
+                              [encryption            #f]
+                              [certificate           (os-build-rtm-path "certs/server-1.pem")]
+                              [max-allow-wait        25]
+                              [transfer-wait-time    120]
+                              ;====================
+                              [bad-auth-sleep-sec    60]
+                              [max-auth-attempts     5]
+                              [passwd-sleep-sec      0]
+                              ;====================
+                              [disable-ftp-commands  null]
+                              ;====================
+                              [passive-host&ports    (ftp:make-passive-host&ports "127.0.0.1" 40000 40999)]
+                              ;====================
+                              [default-root-dir      "ftp-dir"]
+                              ;====================
+                              [log-file              (os-build-rtm-path (format-file-name "logs/rftpd.log"))]
+                              [users-file            (os-build-rtm-path "conf/rftpd.users")]
+                              [groups-file           (os-build-rtm-path "conf/rftpd.groups")])
+                          (if (or (symbol? (second param))
+                                  (number? (second param)))
+                              (set! id (second param))
+                              (error 'id))
+                          (for-each 
+                           (λ (param)
+                             (case (car param)
+                               ((welcome-message)
+                                (set! welcome-message (second param)))
+                               ((host&port)
+                                (set! host (and (ftp:host-string? (second param)) (second param)))
+                                (set! port (and (ftp:port-number? (third param)) (third param))))
+                               ((ssl-protocol&certificate)
+                                (set! encryption (and (ftp:ssl-protocol? (second param)) (second param)))
+                                (set! certificate (build-rtm-path (third param))))
+                               ((passive-host&ports)
+                                (set! passive-host&ports 
+                                      (ftp:make-passive-host&ports (second param) 
+                                                                   (third param)
+                                                                   (fourth param))))
+                               ((max-allow-wait)
+                                (set! max-allow-wait (second param)))
+                               ((transfer-wait-time)
+                                (set! transfer-wait-time (second param)))
+                               ((bad-auth-sleep-sec)
+                                (set! bad-auth-sleep-sec (second param)))
+                               ((max-auth-attempts)
+                                (set! max-auth-attempts (second param)))
+                               ((passwd-sleep-sec)
+                                (set! passwd-sleep-sec (second param)))
+                               ((disable-ftp-commands)
+                                (set! disable-ftp-commands (second param)))
+                               ((default-root-dir)
+                                (set! default-root-dir (second param)))
+                               ((log-file)
+                                (set! log-file (build-rtm-path (format-file-name (second param)))))))
+                           (cddr param))
+                          (hash-set! ftp-servers-params id (ftp-srv-params welcome-message
+                                                                           host
+                                                                           port
+                                                                           encryption 
+                                                                           certificate 
+                                                                           max-allow-wait
+                                                                           transfer-wait-time
+                                                                           bad-auth-sleep-sec
+                                                                           max-auth-attempts 
+                                                                           passwd-sleep-sec 
+                                                                           disable-ftp-commands
+                                                                           passive-host&ports 
+                                                                           default-root-dir
+                                                                           log-file
+                                                                           users-file
+                                                                           groups-file))))]
+                     [(control-server)
+                      (for-each 
+                       (λ (param)
+                         (with-handlers ([any/c void])
+                           (case (car param)
+                             ((host&port)
+                              (set! control-host (and (ftp:host-string? (second param)) (second param)))
+                              (set! control-port (and (ftp:port-number? (third param)) (third param))))
+                             ((ssl-protocol&certificate)
+                              (set! control-encryption (and (ftp:ssl-protocol? (second param)) (second param)))
+                              (set! control-certificate (build-rtm-path (third param))))
+                             ((passwd)
+                              (set! control-passwd (second param)))
+                             ((bad-admin-auth-sleep-sec)
+                              (set! bad-admin-auth-sleep-sec (second param)))
+                             ((max-admin-passwd-attempts)
+                              (set! max-admin-passwd-attempts (second param))))))
+                       (cdr param))]
+                     [(default-locale-encoding)
+                      (set! default-locale-encoding (second param))]))
+                 (cdr conf))))))))
     
-    (define/private (load-users)
-      (with-handlers ([any/c #|displayln|# void])
+    (define/private (load-users server users-file)
+      (with-handlers ([any/c debug/handler])
         (call-with-input-file users-file
           (λ (in)
             (let ([conf (read in)])
@@ -422,20 +467,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                   (fourth user) (fifth user) (sixth user) (seventh user)))
                           (cdr conf))))))))
     
-    (define/private (load-groups)
-      (with-handlers ([any/c #|displayln|# void])
+    (define/private (load-groups server groups-file)
+      (with-handlers ([any/c debug/handler])
         (call-with-input-file groups-file
           (λ (in)
             (let ([conf (read in)])
               (when (eq? (car conf) 'ftp-server-groups)
                 (for-each (λ (group)
                             (send server groupadd (car group) (cadr group) (cddr group)))
-                          (cdr conf))))))))
-    
-    (define/private (init)
-      (load-config)
-      (unless log-out
-        (set! log-out (open-output-file log-file #:exists 'append))))))
+                          (cdr conf))))))))))
 
 ;-----------------------------------
 ;              BEGIN

@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.4.4
+Racket FTP Server Library v1.4.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -28,6 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (require racket/date
          (prefix-in srfi/19: srfi/19)
+         (file "debug.rkt")
          (file "utils.rkt")
          (file "lib-string.rkt")
          (file "lib-ssl.rkt")
@@ -46,20 +47,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (struct passive-host&ports (host from to))
 
 (struct ftp-server-params
-  (passive-1-host&ports
-   passive-2-host&ports
+  (pasv-host&ports
    
-   server-1-host
-   server-2-host
-   
-   ;server-1-encryption
-   ;server-2-encryption
-   
-   ;server-1-certificate
-   ;server-2-certificate
-   
-   ;server-1-ssl-context
-   ;server-2-ssl-context
+   server-host
+   ;server-encryption  
+   ;server-certificate
+   ;server-ssl-context
    
    server-responses
    
@@ -295,7 +288,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class (ftp-encoding% (ftp-utils% object%))
     
     (init-field server-params
-                current-server
                 [pasv-listener #f]
                 [ssl-server-context #f]
                 [ssl-client-context #f]
@@ -339,7 +331,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             [port (ftp-host&port-port active-host&port)])
         (parameterize ([current-custodian current-process])
           (thread (λ ()
-                    (with-handlers ([any/c (λ (e) #|(displayln e)|# (print-abort))])
+                    (with-handlers ([any/c (λ (e) 
+                                             ;(displayln e)
+                                             (print-abort))])
                       (let-values ([(in out) (tcp-connect host port)])
                         (print-connect)
                         (when ssl-client-context
@@ -475,17 +469,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       #:exists exists-mode))
                   (custodian-shutdown-all current-process)))))
     
-    (define-syntax (server-1-host stx)
-      #'(ftp-server-params-server-1-host server-params))
+    (define-syntax (server-host stx)
+      #'(ftp-server-params-server-host server-params))
     
     (define-syntax (default-locale-encoding stx)
-      #'(ftp-server-params-default-locale-encoding server-params))
-    
-    (define-syntax (passive-1-ports-from stx)
-      #'(passive-host&ports-from (ftp-server-params-passive-1-ports server-params)))
-    
-    (define-syntax (passive-2-ports-from stx)
-      #'(passive-host&ports-from (ftp-server-params-passive-2-ports server-params)))))
+      #'(ftp-server-params-default-locale-encoding server-params))))
 
 (define ftp-session%
   (class ftp-DTP%
@@ -500,7 +488,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              ftp-store-file)
     
     (inherit-field server-params
-                   current-server
                    ssl-server-context
                    ssl-client-context
                    current-process
@@ -516,6 +503,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Public Definitions ----------
     ;;
     (init-field welcome-message
+                users&groups
                 random-gen
                 [disable-commands null])
     ;;
@@ -546,6 +534,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define *locale-encoding* default-locale-encoding)
     (define *login* #f)
     (define *userstruct* #f)
+    (define *client-struct* #f)
     (define *root-dir* default-root-dir)
     (define *current-dir* "/")
     (define *rename-path* #f)
@@ -557,19 +546,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define net-addresses (if ssl-server-context ssl-addresses tcp-addresses))
     (define *cmd-list* null)
     (define *cmd-voc* #f)
+    (define *quit* #f)
     ;;
     ;; ---------- Public Methods ----------
     ;;
     (define/public (handle-client-request tcp-listener transfer-wait-time)
       (let ([cust (make-custodian)])
-        (with-handlers ([any/c (λ(e) #|(displayln e)|# (custodian-shutdown-all cust))])
+        (with-handlers ([any/c (λ (e)
+                                 ;(displayln e) 
+                                 (custodian-shutdown-all cust))])
           (parameterize ([current-custodian cust])
             (set!-values (*client-input-port* *client-output-port*) (net-accept tcp-listener))
             (let-values ([(server-host client-host) (net-addresses *client-input-port*)])
               (set! *client-host* client-host)
               (set! *current-protocol* (if (IPv4? server-host) '|1| '|2|))
               (thread (λ ()
-                        (accept-client-request (connect-shutdown transfer-wait-time cust))
+                        (call/cc
+                         (λ (quit)
+                           (set! *quit* quit)
+                           (accept-client-request (connect-shutdown transfer-wait-time cust))))
                         (kill-current-ftp-process)
                         (custodian-shutdown-all cust))))))))
     ;;
@@ -584,7 +579,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         reset))
     
     (define (accept-client-request [reset-timer void])
-      (with-handlers ([any/c #|displayln|# void])
+      (with-handlers ([any/c debug/handler])
         (print-crlf/encoding** 'WELCOME welcome-message)
         (let loop ([request (read-request *locale-encoding* *client-input-port*)])
           (unless (eof-object? request)
@@ -609,15 +604,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (USER-COMMAND params)
       (if params
           (let ([name params])
-            (if (and (userinfo/login name)
-                     (string=? (ftp-user-pass (userinfo/login name)) ""))
+            (if (and (userinfo/login users&groups name)
+                     (string=? (ftp-user-pass (userinfo/login users&groups name)) ""))
                 (print-crlf/encoding** 'ANONYMOUS-LOGIN)
                 (print-crlf/encoding** 'PASSW-REQUIRED name))
             (set! *login* name))
           (begin
             (print-crlf/encoding** 'SYNTAX-ERROR "")
             (set! *login* #f)))
-      (set! *userstruct* #f))
+      (set! *userstruct* #f)
+      (set! *client-struct* #f))
     
     (define (PASS-COMMAND params)
       (sleep pass-sleep-sec)
@@ -625,9 +621,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (if (string? *login*)
                  (let ([pass params])
                    (cond
-                     ((not (userinfo/login *login*))
+                     ((not (userinfo/login users&groups *login*))
                       'login-incorrect)
-                     ((string=? (ftp-user-pass (userinfo/login *login*))
+                     ((string=? (ftp-user-pass (userinfo/login users&groups *login*))
                                 "")
                       'anonymous-logged-in)
                      ((and (hash-ref bad-auth-table *login* #f)
@@ -640,7 +636,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       'login-incorrect)
                      ((not pass)
                       'login-incorrect)
-                     ((string=? (ftp-user-pass (userinfo/login *login*))
+                     ((string=? (ftp-user-pass (userinfo/login users&groups *login*))
                                 pass)
                       (when (hash-ref bad-auth-table *login* #f)
                         (hash-remove! bad-auth-table *login*))
@@ -655,33 +651,39 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  'login-incorrect)])
         (case correct
           [(user-logged-in)
-           (set! *root-dir* (ftp-user-root-dir (userinfo/login *login*)))
+           (set! *root-dir* (ftp-user-root-dir (userinfo/login users&groups *login*)))
            (if (ftp-dir-exists? *root-dir*)
                (begin
-                 (set! *userstruct* (userinfo/login *login*))
+                 (set! *userstruct* (userinfo/login users&groups *login*))
+                 (set! *client-struct* (ftp-client *client-host* *userstruct* users&groups))
                  (print-log-event "User logged in.")
                  (print-crlf/encoding** 'USER-LOGGED *login*))
                (begin
                  (set! *userstruct* #f)
+                 (set! *client-struct* #f)
                  (print-log-event "Users-config file incorrect.")
                  (print-crlf/encoding** 'LOGIN-INCORRECT)))]
           [(anonymous-logged-in)
-           (set! *root-dir* (ftp-user-root-dir (userinfo/login *login*)))
+           (set! *root-dir* (ftp-user-root-dir (userinfo/login users&groups *login*)))
            (if (ftp-dir-exists? *root-dir*)
                (begin
-                 (set! *userstruct* (userinfo/login *login*))
+                 (set! *userstruct* (userinfo/login users&groups *login*))
+                 (set! *client-struct* (ftp-client *client-host* *userstruct* users&groups))
                  (print-log-event "Anonymous user logged in.")
                  (print-crlf/encoding** 'ANONYMOUS-LOGGED))
                (begin
                  (set! *userstruct* #f)
+                 (set! *client-struct* #f)
                  (print-log-event "Users-config file incorrect.")
                  (print-crlf/encoding** 'LOGIN-INCORRECT)))]
           [(login-incorrect)
            (set! *userstruct* #f)
+           (set! *client-struct* #f)
            (print-log-event "Login incorrect.")
            (print-crlf/encoding** 'LOGIN-INCORRECT)]
           [(passw-incorrect)
            (set! *userstruct* #f)
+           (set! *client-struct* #f)
            (print-log-event "Password incorrect.")
            (print-crlf/encoding** 'LOGIN-INCORRECT)])))
     
@@ -691,6 +693,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (begin
             (set! *login* #f)
             (set! *userstruct* #f)
+            (set! *client-struct* #f)
             (print-crlf/encoding** 'SERVICE-READY))))
     
     (define (QUIT-COMMAND params)
@@ -700,7 +703,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (kill-current-ftp-process)
             (print-crlf/encoding** 'QUIT)
             (close-output-port *client-output-port*);ssl required
-            (raise 'quit))))
+            (*quit*))))
     
     (define (PWD-COMMAND params)
       (if params
@@ -861,8 +864,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                ,(string (if (bitwise-bit-set? sysbytes 2) #\r #\-)
                         (if (bitwise-bit-set? sysbytes 1) #\w #\-)
                         (if (bitwise-bit-set? sysbytes 0) #\x #\-))
-               ,(uid->login (vector-ref info 1)) 
-               ,(gid->group-name (vector-ref info 2)) 
+               ,(uid->login users&groups (vector-ref info 1)) 
+               ,(gid->group-name users&groups (vector-ref info 2)) 
                ,ftp-path)))
          
          (define (read-ftp-dir-sys-info ftp-path spath)
@@ -889,7 +892,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                          (let ([d (seconds->date (file-or-directory-modify-seconds full-spath))])
                                            [string-append
                                             (if (ftp-dir-exists? full-spath)
-                                                (format "~a~15F " (read-ftp-dir-sys-info ftp-full-spath full-spath) 0)
+                                                (format "~a~15F " 
+                                                        (read-ftp-dir-sys-info ftp-full-spath full-spath)
+                                                        0)
                                                 (format "~a~15F "
                                                         (read-ftp-file-sys-info ftp-full-spath full-spath)
                                                         (file-size full-spath)))
@@ -1135,7 +1140,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 [uid (vector-ref info 1)]
                                 [gid (vector-ref info 2)])
                            (if (or (= uid (ftp-user-uid *userstruct*))
-                                   (member-ftp-group/gid? *userstruct* root-gid))
+                                   (member-ftp-group/gid? *client-struct* root-gid))
                                (begin
                                  (ftp-mksysfile (string-append full-path target)
                                                 uid gid (get-permis permis))
@@ -1161,12 +1166,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 [info (ftp-file-or-dir/full-info (string-append full-path target))]
                                 [perm (vector-ref info 0)]
                                 [gid (vector-ref info 2)])
-                           (if (and (userinfo/login owner)
-                                    (or (member-ftp-group/gid? *userstruct* root-gid)
+                           (if (and (userinfo/login users&groups owner)
+                                    (or (member-ftp-group/gid? *client-struct* root-gid)
                                         (string=? owner *login*)))
                                (begin
                                  (ftp-mksysfile (string-append full-path target)
-                                                (login->uid owner) gid perm)
+                                                (login->uid users&groups owner) gid perm)
                                  (print-log-event (format "Change the owner of a ~a" 
                                                           (simplify-ftp-path spath)))
                                  (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHOWN"))
@@ -1189,12 +1194,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 [info (ftp-file-or-dir/full-info (string-append full-path target))]
                                 [perm (vector-ref info 0)]
                                 [uid (vector-ref info 1)])
-                           (if (and (groupinfo/name group)
-                                    (or (member-ftp-group/name? *userstruct* group)
-                                        (member-ftp-group/gid? *userstruct* root-gid)))
+                           (if (and (groupinfo/name users&groups group)
+                                    (or (member-ftp-group/name? *client-struct* group)
+                                        (member-ftp-group/gid? *client-struct* root-gid)))
                                (begin
                                  (ftp-mksysfile (string-append full-path target)
-                                                uid (group-name->gid group) perm)
+                                                uid (group-name->gid users&groups group) perm)
                                  (print-log-event (format "Change the group of a ~a" 
                                                           (simplify-ftp-path spath)))
                                  (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHGRP"))
@@ -1450,31 +1455,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (if params
           (print-crlf/encoding** 'SYNTAX-ERROR "")
           (if (eq? *current-protocol* '|1|)
-              (if (= current-server 1)
-                  (let*-values ([(psv-port) (+ passive-1-ports-from
-                                               (random (- passive-1-ports-to passive-1-ports-from -1)
-                                                       random-gen))]
-                                [(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." passive-1-host))]
-                                [(p1 p2) (quotient/remainder psv-port 256)])
-                    (set! DTP 'passive)
-                    (set! passive-host&port (ftp-host&port passive-1-host psv-port))
-                    (kill-current-ftp-process)
-                    (set! current-process (make-custodian))
-                    (parameterize ([current-custodian current-process])
-                      (set! pasv-listener (tcp-listen psv-port 1 #t server-1-host)))
-                    (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2))
-                  (let*-values ([(psv-port) (+ passive-2-ports-from
-                                               (random (- passive-2-ports-to passive-2-ports-from -1)
-                                                       random-gen))]
-                                [(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." passive-2-host))]
-                                [(p1 p2) (quotient/remainder psv-port 256)])
-                    (set! DTP 'passive)
-                    (set! passive-host&port (ftp-host&port passive-2-host psv-port))
-                    (kill-current-ftp-process)
-                    (set! current-process (make-custodian))
-                    (parameterize ([current-custodian current-process])
-                      (set! pasv-listener (tcp-listen psv-port 1 #t server-2-host)))
-                    (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2)))
+              (let*-values ([(psv-port) (+ passive-ports-from
+                                           (random (- passive-ports-to passive-ports-from -1)
+                                                   random-gen))]
+                            [(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." passive-host))]
+                            [(p1 p2) (quotient/remainder psv-port 256)])
+                (set! DTP 'passive)
+                (set! passive-host&port (ftp-host&port passive-host psv-port))
+                (kill-current-ftp-process)
+                (set! current-process (make-custodian))
+                (parameterize ([current-custodian current-process])
+                  (set! pasv-listener (tcp-listen psv-port 1 #t server-host)))
+                (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2))
               (print-crlf/encoding** 'BAD-PROTOCOL))))
     
     (define (EPRT-COMMAND params)
@@ -1495,27 +1487,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (EPSV-COMMAND params)
       (local [(define (set-psv)
                 (set! DTP 'passive)
-                (case current-server
-                  ((1)
-                   (let ([psv-port (+ passive-1-ports-from
-                                      (random (- passive-1-ports-to passive-1-ports-from -1)
-                                              random-gen))])
-                     (set! passive-host&port (ftp-host&port passive-1-host psv-port))
-                     (kill-current-ftp-process)
-                     (set! current-process (make-custodian))
-                     (parameterize ([current-custodian current-process])
-                       (set! pasv-listener (tcp-listen psv-port 1 #t server-1-host)))
-                     (print-crlf/encoding** 'EPSV psv-port)))
-                  ((2)
-                   (let ([psv-port (+ passive-2-ports-from
-                                      (random (- passive-2-ports-to passive-2-ports-from -1)
-                                              random-gen))])
-                     (set! passive-host&port (ftp-host&port passive-2-host psv-port))
-                     (kill-current-ftp-process)
-                     (set! current-process (make-custodian))
-                     (parameterize ([current-custodian current-process])
-                       (set! pasv-listener (tcp-listen psv-port 1 #t server-2-host)))
-                     (print-crlf/encoding** 'EPSV psv-port)))))
+                (let ([psv-port (+ passive-ports-from
+                                   (random (- passive-ports-to passive-ports-from -1)
+                                           random-gen))])
+                  (set! passive-host&port (ftp-host&port passive-host psv-port))
+                  (kill-current-ftp-process)
+                  (set! current-process (make-custodian))
+                  (parameterize ([current-custodian current-process])
+                    (set! pasv-listener (tcp-listen psv-port 1 #t server-host)))
+                  (print-crlf/encoding** 'EPSV psv-port)))
               (define (epsv-1)
                 (if (eq? *current-protocol* '|1|)
                     (set-psv)
@@ -1547,29 +1527,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax (bad-auth-table stx)
       #'(ftp-server-params-bad-auth server-params))
     
-    (define-syntax (server-1-host stx)
-      #'(ftp-server-params-server-1-host server-params))
+    (define-syntax (server-host stx)
+      #'(ftp-server-params-server-host server-params))
     
-    (define-syntax (server-2-host stx)
-      #'(ftp-server-params-server-2-host server-params))
+    (define-syntax (passive-host stx)
+      #'(passive-host&ports-host (ftp-server-params-pasv-host&ports server-params)))
     
-    (define-syntax (passive-1-host stx)
-      #'(passive-host&ports-host (ftp-server-params-passive-1-host&ports server-params)))
+    (define-syntax (passive-ports-from stx)
+      #'(passive-host&ports-from (ftp-server-params-pasv-host&ports server-params)))
     
-    (define-syntax (passive-2-host stx)
-      #'(passive-host&ports-host (ftp-server-params-passive-2-host&ports server-params)))
-    
-    (define-syntax (passive-1-ports-from stx)
-      #'(passive-host&ports-from (ftp-server-params-passive-1-host&ports server-params)))
-    
-    (define-syntax (passive-1-ports-to stx)
-      #'(passive-host&ports-to (ftp-server-params-passive-1-host&ports server-params)))
-    
-    (define-syntax (passive-2-ports-from stx)
-      #'(passive-host&ports-from (ftp-server-params-passive-2-host&ports server-params)))
-    
-    (define-syntax (passive-2-ports-to stx)
-      #'(passive-host&ports-to (ftp-server-params-passive-2-host&ports server-params)))
+    (define-syntax (passive-ports-to stx)
+      #'(passive-host&ports-to (ftp-server-params-pasv-host&ports server-params)))
     
     (define-syntax (default-root-dir stx)
       #'(ftp-server-params-default-root-dir server-params))
@@ -1610,27 +1578,27 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax (ftp-vfs-obj-access-allow*? stx)
       (syntax-case stx ()
         [(_ ftp-full-spath)
-         #'(ftp-vfs-obj-access-allow? *root-dir* ftp-full-spath *userstruct*)]
+         #'(ftp-vfs-obj-access-allow? *root-dir* ftp-full-spath *client-struct*)]
         [(_ ftp-full-spath drop)
-         #'(ftp-vfs-obj-access-allow? *root-dir* ftp-full-spath *userstruct* drop)]))
+         #'(ftp-vfs-obj-access-allow? *root-dir* ftp-full-spath *client-struct* drop)]))
     
     (define-syntax-rule (ftp-perm-allow? ftp-full-spath)
       (ftp-vfs-obj-access-allow*? ftp-full-spath 1))
     
     (define-syntax-rule (ftp-file-allow-read*? ftp-full-spath)
-      (ftp-file-allow-read? ftp-full-spath *userstruct*))
+      (ftp-file-allow-read? ftp-full-spath *client-struct*))
     
     (define-syntax-rule (ftp-file-allow-write*? ftp-full-spath)
-      (ftp-file-allow-write? ftp-full-spath *userstruct*))
+      (ftp-file-allow-write? ftp-full-spath *client-struct*))
     
     (define-syntax-rule (ftp-dir-allow-read*? ftp-full-spath)
-      (ftp-dir-allow-read? ftp-full-spath *userstruct*))
+      (ftp-dir-allow-read? ftp-full-spath *client-struct*))
     
     (define-syntax-rule (ftp-dir-allow-write*? ftp-full-spath)
-      (ftp-dir-allow-write? ftp-full-spath *userstruct*))
+      (ftp-dir-allow-write? ftp-full-spath *client-struct*))
     
     (define-syntax-rule (ftp-dir-allow-execute*? ftp-full-spath)
-      (ftp-dir-allow-execute? ftp-full-spath *userstruct*))
+      (ftp-dir-allow-execute? ftp-full-spath *client-struct*))
     
     (define-syntax-rule (build-ftp-spath* ftp-spath ...)
       (build-ftp-spath *current-dir* ftp-spath ...))
@@ -1751,21 +1719,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define host/c (or/c host-string? not))
 (define ssl-protocol/c (or/c ssl-protocol? not))
-(define not-null-string/c (and/c string? (λ(dir) (not (string=? dir "")))))
-(define ssl-certificate/c (or/c path-string? not))
+(define not-null-string/c (and/c string? (λ(str) (not (string=? str "")))))
+(define file-path/c (or/c path-string? not))
 
 (define/contract ftp-server%
-  (class/c (init-field [welcome-message         string?]
+  (class/c (init-field [welcome-message         not-null-string/c]
                        
-                       [server-1-host           host/c]
-                       [server-1-port           port-number?]
-                       [server-1-encryption     ssl-protocol/c]
-                       [server-1-certificate    ssl-certificate/c]
-                       
-                       [server-2-host           host/c]
-                       [server-2-port           port-number?]
-                       [server-2-encryption     ssl-protocol/c]
-                       [server-2-certificate    ssl-certificate/c]
+                       [server-host             host/c]
+                       [server-port             port-number?]
+                       [server-encryption       ssl-protocol/c]
+                       [server-certificate      file-path/c]
                        
                        [max-allow-wait          exact-nonnegative-integer?]
                        [transfer-wait-time      exact-nonnegative-integer?]
@@ -1776,12 +1739,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        
                        [disable-ftp-commands    (listof symbol?)]
                        
-                       [passive-1-host&ports    passive-host&ports?]
-                       [passive-2-host&ports    passive-host&ports?]
+                       [pasv-host&ports         passive-host&ports?]
                        
                        [default-root-dir        not-null-string/c]
                        [default-locale-encoding string?]
-                       [log-output-port         output-port?])
+                       [log-file                file-path/c])
            [useradd (not-null-string/c string? exact-nonnegative-integer? exact-nonnegative-integer?
                                        not-null-string/c (non-empty-listof not-null-string/c) string? . ->m . void?)]
            [groupadd (not-null-string/c exact-nonnegative-integer? (listof not-null-string/c) . ->m . void?)])
@@ -1793,15 +1755,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     (init-field [welcome-message         "Racket FTP Server!"]
                 
-                [server-1-host           "127.0.0.1"]
-                [server-1-port           21]
-                [server-1-encryption     #f]
-                [server-1-certificate    #f]
-                
-                [server-2-host           #f]
-                [server-2-port           #f]
-                [server-2-encryption     #f]
-                [server-2-certificate    #f]
+                [server-host             "127.0.0.1"]
+                [server-port             21]
+                [server-encryption       #f]
+                [server-certificate      #f]
                 
                 [max-allow-wait          25]
                 [transfer-wait-time      120]
@@ -1812,48 +1769,40 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 
                 [disable-ftp-commands    null]
                 
-                [passive-1-host&ports    (make-passive-host&ports "127.0.0.1" 40000 40999)]
-                [passive-2-host&ports    (make-passive-host&ports "127.0.0.1" 40000 40999)]
+                [pasv-host&ports         (make-passive-host&ports "127.0.0.1" 40000 40999)]
                 
                 [default-root-dir        "ftp-dir"]
                 [default-locale-encoding "UTF-8"]
-                [log-output-port         (current-output-port)])
+                [log-file                #f])
     ;;
     ;; ---------- Private Definitions ----------
     ;;
     (define server-params #f)
+    (define users&groups (make-users&groups))
     (define state 'stopped)
     (define server-custodian #f)
-    (define server-1-thread #f)
-    (define server-2-thread #f)
-    (define random-1-gen (make-pseudo-random-generator))
-    (define random-2-gen (make-pseudo-random-generator))
+    (define server-thread #f)
+    (define random-gen (make-pseudo-random-generator))
     ;;
     ;; ---------- Public Methods ----------
     ;;
     (define/public (useradd login pass uid gid [root-dir "/"] [home-dirs '("/")] [info ""])
-      (ftp-useradd login pass uid gid root-dir home-dirs info))
+      (ftp-useradd users&groups login pass uid gid root-dir home-dirs info))
     
     (define/public (groupadd name gid users)
-      (ftp-groupadd name gid users))
-    
-    (define/public (clear-ftp-users)
-      (ftp-clear-users))
-    
-    (define/public (clear-ftp-groups)
-      (ftp-clear-groups))
+      (ftp-groupadd users&groups name gid users))
     
     (define/public (start)
       (when (eq? state 'stopped)
         (set! server-custodian (make-custodian))
-        (set! server-params (ftp-server-params passive-1-host&ports
-                                               passive-2-host&ports
-                                               server-1-host
-                                               server-2-host
+        (set! server-params (ftp-server-params pasv-host&ports
+                                               server-host
                                                default-server-responses
                                                default-root-dir
                                                default-locale-encoding
-                                               log-output-port
+                                               (if log-file 
+                                                   (open-output-file log-file #:exists 'append)
+                                                   (current-output-port))
                                                (make-hash)        ;bad-auth
                                                bad-auth-sleep-sec
                                                max-auth-attempts
@@ -1861,58 +1810,32 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (unless (ftp-dir-exists? default-root-dir)
           (ftp-mkdir default-root-dir))
         (parameterize ([current-custodian server-custodian])
-          (when (and server-1-host server-1-port)
+          (when (and server-host server-port)
             (let* ([ssl-server-ctx
-                    (and/exc server-1-encryption server-1-certificate
-                             (let ([ctx (ssl-make-server-context server-1-encryption)])
-                               (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
-                               (ssl-load-private-key! ctx server-1-certificate #t #f default-locale-encoding)
+                    (and/exc server-encryption server-certificate
+                             (let ([ctx (ssl-make-server-context server-encryption)])
+                               (ssl-load-certificate-chain! ctx server-certificate default-locale-encoding)
+                               (ssl-load-private-key! ctx server-certificate #t #f default-locale-encoding)
                                ctx))]
                    [ssl-client-ctx
-                    (and/exc server-1-encryption server-1-certificate
-                             (let ([ctx (ssl-make-client-context server-1-encryption)])
-                               (ssl-load-certificate-chain! ctx server-1-certificate default-locale-encoding)
-                               (ssl-load-private-key! ctx server-1-certificate #t #f default-locale-encoding)
+                    (and/exc server-encryption server-certificate
+                             (let ([ctx (ssl-make-client-context server-encryption)])
+                               (ssl-load-certificate-chain! ctx server-certificate default-locale-encoding)
+                               (ssl-load-private-key! ctx server-certificate #t #f default-locale-encoding)
                                ctx))]
-                   [tcp-listener (tcp-listen server-1-port max-allow-wait #t server-1-host)])
+                   [tcp-listener (tcp-listen server-port max-allow-wait #t server-host)])
               (letrec ([main-loop (λ ()
                                     (send (new ftp-session%
-                                               [current-server 1]
                                                [server-params server-params]
+                                               [users&groups users&groups]
                                                [ssl-server-context ssl-server-ctx]
                                                [ssl-client-context ssl-client-ctx]
                                                [disable-commands disable-ftp-commands]
-                                               [random-gen random-1-gen]
+                                               [random-gen random-gen]
                                                [welcome-message welcome-message])
                                           handle-client-request tcp-listener transfer-wait-time)
                                     (main-loop))])
-                (set! server-1-thread (thread main-loop)))))
-          (when (and server-2-host server-2-port)
-            (let* ([ssl-server-ctx
-                    (and/exc server-2-encryption server-2-certificate
-                             (let ([ctx (ssl-make-server-context server-2-encryption)])
-                               (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
-                               (ssl-load-private-key! ctx server-2-certificate #t #f default-locale-encoding)
-                               ctx))]
-                   [ssl-client-ctx
-                    (and/exc server-2-encryption server-2-certificate
-                             (let ([ctx (ssl-make-client-context server-2-encryption)])
-                               (ssl-load-certificate-chain! ctx server-2-certificate default-locale-encoding)
-                               (ssl-load-private-key! ctx server-2-certificate #t #f default-locale-encoding)
-                               ctx))]
-                   [tcp-listener (tcp-listen server-2-port max-allow-wait #t server-2-host)])
-              (letrec ([main-loop (λ ()
-                                    (send (new ftp-session%
-                                               [current-server 2]
-                                               [server-params server-params]
-                                               [ssl-server-context ssl-server-ctx]
-                                               [ssl-client-context ssl-client-ctx]
-                                               [disable-commands disable-ftp-commands]
-                                               [random-gen random-2-gen]
-                                               [welcome-message welcome-message])
-                                          handle-client-request tcp-listener transfer-wait-time)
-                                    (main-loop))])
-                (set! server-2-thread (thread main-loop))))))
+                (set! server-thread (thread main-loop))))))
         (set! state 'running)))
     
     (define/public (stop)

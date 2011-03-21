@@ -1,4 +1,5 @@
 (ftp-server-groups
 ;   Group Name   |  GID  | Users
+  ["root"             0   .("root")]
   ["anonymous"      100   .("anonymous" "ftp")]
   ["racket"         200   .("usr")])
