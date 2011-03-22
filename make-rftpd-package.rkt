@@ -1,6 +1,6 @@
 #|
 
-RFTPd Package Builder v1.0.1
+RFTPd Package Builder v1.0.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -44,6 +44,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define copyright-src "COPYRIGHT")
 (define copyright-dest (build-path package-dir "COPYRIGHT"))
 (define flags "flags.rkt")
+(define flags-temp "flags.copy")
 
 (display "Please wait for final assembly of the package")
 (define thd (letrec ([loop (λ() 
@@ -68,14 +69,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (copy-directory/files certs-src certs-dest)
 (copy-file license-src license-dest)
 (copy-file copyright-src copyright-dest)
+(rename-file-or-directory flags flags-temp)
 
 (display-lines-to-file
  '("#lang racket/base"
    "(require (for-syntax racket/base))"
    "(provide (for-syntax create-executable?))"
    "(define-for-syntax create-executable? #t)")
- flags
- #:exists 'truncate)
+ flags)
 
 (with-handlers ([void (λ (e) 
                         (kill-thread thd) 
@@ -89,11 +90,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (assemble-distribution package-dir (list dest-exe))))
 
 (delete-file dest-exe)
-(display-lines-to-file
- '("#lang racket/base"
-   "(require (for-syntax racket/base))"
-   "(provide (for-syntax create-executable?))"
-   "(define-for-syntax create-executable? #f)")
- flags
- #:exists 'truncate)
+(delete-file flags)
+(rename-file-or-directory flags-temp flags)
 (kill-thread thd)
