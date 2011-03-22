@@ -1,4 +1,8 @@
 #|
+
+RFTPd Package Builder v1.0.1
+----------------------------------------------------------------------
+
 Summary:
 This file is part of Racket FTP Server.
 
@@ -20,12 +24,14 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 |#
 
-#lang racket
+#lang racket/base
 
-(require compiler/embed)
-(require compiler/distribute)
+(require racket/file
+         compiler/embed
+         compiler/distribute)
 
 (define package-dir "rftpd-package")
+(define compiled-dir "compiled")
 (define temp-dir (find-system-path 'temp-dir))
 (define dest-exe (build-path temp-dir "rftpd.exe"))
 (define logs-dir (build-path package-dir "logs"))
@@ -39,20 +45,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define copyright-dest (build-path package-dir "COPYRIGHT"))
 (define flags "flags.rkt")
 
-(display "Please wait for the package build")
-(letrec ([loop (λ() 
-                 (sleep 0.5) 
-                 (write-char #\.)
-                 (flush-output)
-                 (loop))])
-  (thread loop)
-  (void))
+(display "Please wait for final assembly of the package")
+(define thd (letrec ([loop (λ() 
+                             (sleep 0.5) 
+                             (write-char #\.)
+                             (flush-output)
+                             (loop))])
+              (thread loop)))
 
 (when (file-exists? dest-exe)
   (delete-file dest-exe))
 
 (when (directory-exists? package-dir)
   (delete-directory/files package-dir))
+
+(when (directory-exists? compiled-dir)
+  (delete-directory/files compiled-dir))
 
 (make-directory package-dir)
 (make-directory logs-dir)
@@ -69,14 +77,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
  flags
  #:exists 'truncate)
 
-(with-handlers ([void displayln])
-  (create-embedding-executable 
-   dest-exe
-   #:modules '((#f (file "rftpd.rkt")))
-   #:literal-expression
-   (parameterize ([current-namespace (make-base-namespace)])
-     (compile '(namespace-require ''rftpd))))
-  (assemble-distribution package-dir (list dest-exe)))
+(with-handlers ([void (λ (e) 
+                        (kill-thread thd) 
+                        (displayln e))])
+  (parameterize ([current-namespace (make-base-namespace)])
+    (create-embedding-executable 
+     dest-exe
+     #:modules '((#f (file "rftpd.rkt")))
+     #:literal-expression
+     (compile '(namespace-require ''rftpd)))
+    (assemble-distribution package-dir (list dest-exe))))
 
 (delete-file dest-exe)
 (display-lines-to-file
@@ -86,3 +96,4 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    "(define-for-syntax create-executable? #f)")
  flags
  #:exists 'truncate)
+(kill-thread thd)
