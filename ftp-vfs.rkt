@@ -1,6 +1,6 @@
 #|
 
-RFTPd VFS Library v1.0.3
+RFTPd VFS Library v1.0.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -29,14 +29,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (require (file "lib-string.rkt"))
 
 (provide (except-out (all-defined-out)
-                     ftp-users&groups
+                     (struct-out ftp-users&groups)
                      ftp-users/uid
                      ftp-groups/gid))
 
 (struct ftp-user (login pass uid gid root-dir home-dirs info))
 (struct ftp-group (name gid users))
 
-(struct ftp-users&groups (users/login users/uid groups/name groups/gid))
+(struct ftp-users&groups (users/login users/uid groups/name groups/gid) #:mutable)
 (struct ftp-client (ip [userStruct #:mutable] users&groups))
 
 (define ftp-vfs-file-extension #"ftp-racket-file")
@@ -60,6 +60,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 ;=============================
 
+(define (clear-users-info users&groups)
+  (set-ftp-users&groups-users/login! users&groups (make-hash))
+  (set-ftp-users&groups-users/uid! users&groups (make-hash)))
+
 (define (userinfo/login users&groups login)
   (hash-ref (ftp-users&groups-users/login users&groups) login #f))
 
@@ -73,6 +77,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define (uid->login users&groups uid)
   (let ([user (hash-ref (ftp-users&groups-users/uid users&groups) uid #f)])
     (and user (ftp-user-login user))))
+
+(define (clear-groups-info users&groups)
+  (set-ftp-users&groups-groups/name! users&groups (make-hash))
+  (set-ftp-users&groups-groups/gid! users&groups (make-hash)))
 
 (define (groupinfo/name users&groups name)
   (hash-ref (ftp-users&groups-groups/name users&groups) name #f))

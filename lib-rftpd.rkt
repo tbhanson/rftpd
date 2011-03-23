@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.4.5
+Racket FTP Server Library v1.4.6
 ----------------------------------------------------------------------
 
 Summary:
@@ -1792,24 +1792,33 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define/public (groupadd name gid users)
       (ftp-groupadd users&groups name gid users))
     
+    (define/public (clear-users&groups-tables)
+      (set! users&groups (make-users&groups)))
+    
+    (define/public (clear-users-table)
+      (clear-users-info users&groups))
+    
+    (define/public (clear-groups-table)
+      (clear-groups-info users&groups))
+    
     (define/public (start)
       (when (eq? state 'stopped)
         (set! server-custodian (make-custodian))
-        (set! server-params (ftp-server-params pasv-host&ports
-                                               server-host
-                                               default-server-responses
-                                               default-root-dir
-                                               default-locale-encoding
-                                               (if log-file 
-                                                   (open-output-file log-file #:exists 'append)
-                                                   (current-output-port))
-                                               (make-hash)        ;bad-auth
-                                               bad-auth-sleep-sec
-                                               max-auth-attempts
-                                               pass-sleep-sec))
-        (unless (ftp-dir-exists? default-root-dir)
-          (ftp-mkdir default-root-dir))
         (parameterize ([current-custodian server-custodian])
+          (set! server-params (ftp-server-params pasv-host&ports
+                                                 server-host
+                                                 default-server-responses
+                                                 default-root-dir
+                                                 default-locale-encoding
+                                                 (if log-file 
+                                                     (open-output-file log-file #:exists 'append)
+                                                     (current-output-port))
+                                                 (make-hash) ;bad-auth
+                                                 bad-auth-sleep-sec
+                                                 max-auth-attempts
+                                                 pass-sleep-sec))
+          (unless (ftp-dir-exists? default-root-dir)
+            (ftp-mkdir default-root-dir))
           (when (and server-host server-port)
             (let* ([ssl-server-ctx
                     (and/exc server-encryption server-certificate

@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.2.6
+Racket FTP Server v1.2.7
 ----------------------------------------------------------------------
 
 Summary:
@@ -92,7 +92,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.2.6 <development>"]
+    (init-field [server-name&version        "Racket FTP Server v1.2.7 <development>"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -242,8 +242,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          [default-locale-encoding default-locale-encoding]
                          [log-file                (ftp-srv-params-log-file params)])])
            (hash-set! ftp-servers id srv)
-           (load-users srv (ftp-srv-params-users-file params))
-           (load-groups srv (ftp-srv-params-groups-file params))
            (start! id srv))))
       (thread-wait (server-control)))
     
@@ -334,6 +332,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                        (current-seconds))))))
     
     (define/private (start! id server)
+      (send server clear-users&groups-tables)
+      (load-users server (ftp-srv-params-users-file (hash-ref ftp-servers-params id)))
+      (load-groups server (ftp-srv-params-groups-file (hash-ref ftp-servers-params id)))
       (send server start)
       (when echo? (displayln (format "Server ~a: ~a!" id (send server status)))))
     
