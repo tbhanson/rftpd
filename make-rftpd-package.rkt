@@ -1,6 +1,6 @@
 #|
 
-RFTPd Package Builder v1.0.2
+RFTPd Package Builder v1.0.3
 ----------------------------------------------------------------------
 
 Summary:
@@ -54,42 +54,42 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                              (loop))])
               (thread loop)))
 
-(when (file-exists? dest-exe)
-  (delete-file dest-exe))
-
-(when (directory-exists? package-dir)
-  (delete-directory/files package-dir))
-
-(when (directory-exists? compiled-dir)
-  (delete-directory/files compiled-dir))
-
-(make-directory package-dir)
-(make-directory logs-dir)
-(copy-directory/files conf-src conf-dest)
-(copy-directory/files certs-src certs-dest)
-(copy-file license-src license-dest)
-(copy-file copyright-src copyright-dest)
-(rename-file-or-directory flags flags-temp)
-
-(display-lines-to-file
- '("#lang racket/base"
-   "(require (for-syntax racket/base))"
-   "(provide (for-syntax create-executable?))"
-   "(define-for-syntax create-executable? #t)")
- flags)
-
 (with-handlers ([void (λ (e) 
-                        (kill-thread thd) 
-                        (displayln e))])
+                        (kill-thread thd)
+                        (printf "\nError:\n~a\n" e))])
+  (when (file-exists? dest-exe)
+    (delete-file dest-exe))
+  
+  (when (directory-exists? package-dir)
+    (delete-directory/files package-dir))
+  
+  (when (directory-exists? compiled-dir)
+    (delete-directory/files compiled-dir))
+  
+  (make-directory package-dir)
+  (make-directory logs-dir)
+  (copy-directory/files conf-src conf-dest)
+  (copy-directory/files certs-src certs-dest)
+  (copy-file license-src license-dest)
+  (copy-file copyright-src copyright-dest)
+  (rename-file-or-directory flags flags-temp)
+  
+  (display-lines-to-file
+   '("#lang racket/base"
+     "(require (for-syntax racket/base))"
+     "(provide (for-syntax create-executable?))"
+     "(define-for-syntax create-executable? #t)")
+   flags)
+  
   (parameterize ([current-namespace (make-base-namespace)])
     (create-embedding-executable 
      dest-exe
      #:modules '((#f (file "rftpd.rkt")))
      #:literal-expression
      (compile '(namespace-require ''rftpd)))
-    (assemble-distribution package-dir (list dest-exe))))
-
-(delete-file dest-exe)
-(delete-file flags)
-(rename-file-or-directory flags-temp flags)
-(kill-thread thd)
+    (assemble-distribution package-dir (list dest-exe)))
+  
+  (delete-file dest-exe)
+  (delete-file flags)
+  (rename-file-or-directory flags-temp flags)
+  (kill-thread thd))
