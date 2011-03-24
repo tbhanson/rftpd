@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.4.6
+Racket FTP Server Library v1.4.7
 ----------------------------------------------------------------------
 
 Summary:
@@ -879,7 +879,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (define (dlst ftp-dir-name)
            (let* ([full-dir-name (string-append *root-dir* ftp-dir-name)]
                   [dirlist 
-                   (if (ftp-dir-allow-read*? full-dir-name)
+                   (if (ftp-dir-allow-list*? full-dir-name)
                        (string-append*
                         (map (λ (p)
                                (let* ([spath (path->string p)]
@@ -991,7 +991,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (if (ftp-vfs-obj-access-allow*? ftp-parent-path)
                     (let* ([full-parent-path (string-append *root-dir* ftp-parent-path)]
                            [sp (string-append full-parent-path "/" dir-name)])
-                      (if (ftp-dir-allow-write*? full-parent-path)
+                      (if (ftp-dir-allow-mkdir*? full-parent-path)
                           (if (ftp-dir-exists? sp)
                               (print-crlf/encoding** 'DIR-EXIST)
                               (let* ([fpp (simplify-ftp-path ftp-parent-path)]
@@ -1035,7 +1035,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                (let ([spath (string-append *root-dir* ftp-path)])
                  (if ((file-or-directory-identity spath). = .(file-or-directory-identity *root-dir*))
                      (print-crlf/encoding** 'DIR-NOT-FOUND)
-                     (if (ftp-dir-allow-write*? (string-append *root-dir* (simplify-ftp-path ftp-path 1)))
+                     (if (ftp-dir-allow-delete*? (string-append *root-dir* (simplify-ftp-path ftp-path 1)))
                          (let ([lst (directory-list spath)])
                            (if (> (length lst) 1)
                                (print-crlf/encoding** 'DELDIR-NOT-EMPTY)
@@ -1057,10 +1057,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (local [(define (stor ftp-parent-path file-name)
                 (if (ftp-vfs-obj-access-allow*? ftp-parent-path)
                     (let ([real-path (string-append *root-dir* ftp-parent-path "/" file-name)])
-                      (if (and (ftp-dir-allow-write*? (string-append *root-dir* ftp-parent-path))
-                               (ftp-file-name-safe? real-path)
-                               (or (not (ftp-file-exists? real-path))
-                                   (ftp-file-allow-write*? real-path)))
+                      (if (and (ftp-dir-allow-store&append*? (string-append *root-dir* ftp-parent-path))
+                               (ftp-file-name-safe? real-path))
                           (ftp-store-file *userstruct* real-path exists-mode)
                           (print-crlf/encoding** 'STORE-FILE-PERM-DENIED)))
                     (print-crlf/encoding** 'CANT-STORE-FILE)))]
@@ -1087,7 +1085,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (params
          (print-crlf/encoding** 'SYNTAX-ERROR ""))
         ((and (ftp-vfs-obj-access-allow*? *current-dir*)
-              (ftp-dir-allow-write*? (string-append *root-dir* *current-dir*)))
+              (ftp-dir-allow-store&append*? (string-append *root-dir* *current-dir*)))
          (let* ([file-name (let loop ([fname (gensym "noname")])
                              (if (ftp-file-exists? (string-append *root-dir* *current-dir* "/" fname))
                                  (loop (gensym "noname"))
@@ -1102,7 +1100,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         [(define (dele ftp-path)
            (if (ftp-perm-allow? ftp-path)
                (let ([spath (string-append *root-dir* ftp-path)])
-                 (if (ftp-dir-allow-write*? (string-append *root-dir* (simplify-ftp-path ftp-path 1)))
+                 (if (ftp-dir-allow-delete*? (string-append *root-dir* (simplify-ftp-path ftp-path 1)))
                      (with-handlers ([exn:fail:filesystem? (λ (e)
                                                              (print-crlf/encoding* "550 System error."))])
                        (delete-file (string-append spath ftp-vfs-file-spath))
@@ -1276,7 +1274,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (MLST-COMMAND params)
       (local [(define (mlst ftp-path)
                 (if (and (ftp-perm-allow? ftp-path)
-                         (ftp-dir-allow-read*? (string-append *root-dir* (simplify-ftp-path ftp-path 1))))
+                         (ftp-dir-allow-list*? (string-append *root-dir* (simplify-ftp-path ftp-path 1))))
                     (begin
                       (print-crlf/encoding** 'MLST-LISTING)
                       (print-crlf/encoding* (string-append " " (mlst-info ftp-path)))
@@ -1306,7 +1304,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (if (ftp-dir-allow-execute*? (string-append *root-dir* ftp-path))
                         (let* ([path (string-append *root-dir* ftp-path)]
                                [dirlist 
-                                (if (ftp-dir-allow-read*? path)
+                                (if (ftp-dir-allow-list*? path)
                                     (string-append*
                                      (map (λ (p)
                                             (let* ([spath (path->string p)]
@@ -1377,7 +1375,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (cond
               ((ftp-file-exists? path)
                (if (ftp-perm-allow? spath)
-                   (if (ftp-dir-allow-write*? (string-append *root-dir* (simplify-ftp-path spath 1)))
+                   (if (ftp-dir-allow-rename*? (string-append *root-dir* (simplify-ftp-path spath 1)))
                        (begin
                          (set! *rename-path* path)
                          (print-crlf/encoding** 'RENAME-OK))
@@ -1385,7 +1383,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
               ((ftp-dir-exists? path)
                (if (ftp-perm-allow? spath)
-                   (if (ftp-dir-allow-write*? (string-append *root-dir* (simplify-ftp-path spath 1)))
+                   (if (ftp-dir-allow-rename*? (string-append *root-dir* (simplify-ftp-path spath 1)))
                        (begin
                          (set! *rename-path* path)
                          (print-crlf/encoding** 'RENAME-OK))
@@ -1399,7 +1397,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (local [(define (move file? old-path ftp-parent-path name user)
                 (if (ftp-vfs-obj-access-allow*? ftp-parent-path)
                     (let ([new-path (string-append *root-dir* ftp-parent-path "/" name)])
-                      (if (ftp-dir-allow-write*? (string-append *root-dir* ftp-parent-path))
+                      (if (ftp-dir-allow-rename*? (string-append *root-dir* ftp-parent-path))
                           (if (if file?
                                   (ftp-file-exists? new-path)
                                   (ftp-dir-exists? new-path))
@@ -1588,14 +1586,23 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax-rule (ftp-file-allow-read*? ftp-full-spath)
       (ftp-file-allow-read? ftp-full-spath *client-struct*))
     
-    (define-syntax-rule (ftp-file-allow-write*? ftp-full-spath)
-      (ftp-file-allow-write? ftp-full-spath *client-struct*))
+    (define-syntax-rule (ftp-file-allow-append*? ftp-full-spath)
+      (ftp-file-allow-append? ftp-full-spath *client-struct*))
     
-    (define-syntax-rule (ftp-dir-allow-read*? ftp-full-spath)
-      (ftp-dir-allow-read? ftp-full-spath *client-struct*))
+    (define-syntax-rule (ftp-dir-allow-list*? ftp-full-spath)
+      (ftp-dir-allow-list? ftp-full-spath *client-struct*))
     
-    (define-syntax-rule (ftp-dir-allow-write*? ftp-full-spath)
-      (ftp-dir-allow-write? ftp-full-spath *client-struct*))
+    (define-syntax-rule (ftp-dir-allow-store&append*? ftp-full-spath)
+      (ftp-dir-allow-store&append? ftp-full-spath *client-struct*))
+    
+    (define-syntax-rule (ftp-dir-allow-mkdir*? ftp-full-spath)
+      (ftp-dir-allow-mkdir? ftp-full-spath *client-struct*))
+    
+    (define-syntax-rule (ftp-dir-allow-rename*? ftp-full-spath)
+      (ftp-dir-allow-rename? ftp-full-spath *client-struct*))
+    
+    (define-syntax-rule (ftp-dir-allow-delete*? ftp-full-spath)
+      (ftp-dir-allow-delete? ftp-full-spath *client-struct*))
     
     (define-syntax-rule (ftp-dir-allow-execute*? ftp-full-spath)
       (ftp-dir-allow-execute? ftp-full-spath *client-struct*))
@@ -1623,6 +1630,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              [path (string-append *root-dir* ftp-path)]
              [parent-path (and (not (string=? "/" ftp-path))
                                (string-append *root-dir* (simplify-ftp-path ftp-path 1)))]
+             [parent-info (and parent-path
+                               (ftp-file-or-dir/full-info 
+                                (string-append parent-path ftp-vfs-dir-spath)))]
              [name (path->string (file-name-from-path ftp-path))]
              [file? (file-exists? path)]
              [info (ftp-file-or-dir/full-info (string-append path
@@ -1630,6 +1640,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                  ftp-vfs-file-spath
                                                                  ftp-vfs-dir-spath)))]
              [sysbytes (vector-ref info 0)]
+             [parent-sysbytes (and parent-info (vector-ref parent-info 0))]
              [user *userstruct*]
              [uid (ftp-user-uid user)]
              [gid (ftp-user-gid user)]
@@ -1643,19 +1654,58 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            "")
                        (if (ftp-mlst-features-perm? features)
                            (format "Perm=~a;"
-                                   (if (= gid root-gid)
+                                   (if (member-ftp-group/gid? *client-struct* root-gid)
                                        (if file? "rawfd" "elcmfd")
                                        (let ([i (cond
                                                   ((= (vector-ref info 1) uid) 8)
                                                   ((= (vector-ref info 2) gid) 5)
-                                                  (else 2))])
-                                         (string-append 
-                                          (if (and (bitwise-bit-set? sysbytes (- i 2)) (not file?)) "e" "")
-                                          (if (bitwise-bit-set? sysbytes i) (if file? "r" "l") "")
-                                          (if (bitwise-bit-set? sysbytes (sub1 i)) (if file? "a" "cm") "")
-                                          (if (and parent-path
-                                                   (ftp-dir-allow-write*? parent-path))
-                                              (if file? "wfd" "fd") "")))))
+                                                  (else 2))]
+                                             [p (and parent-info
+                                                     (cond
+                                                       ((= (vector-ref parent-info 1) uid) 8)
+                                                       ((= (vector-ref parent-info 2) gid) 5)
+                                                       (else 2)))])
+                                         (string-append
+                                          (if (and (not file?) 
+                                                   (bitwise-bit-set? sysbytes (- i 2)))
+                                              "e" "")
+                                          (if file?
+                                              (if (and (if (ftp-user-ftp-perm user)
+                                                           (ftp-permissions-r? (ftp-user-ftp-perm user))
+                                                           #t)
+                                                       (bitwise-bit-set? sysbytes i))
+                                                  "r" "")
+                                              (if (and (if (ftp-user-ftp-perm user)
+                                                           (ftp-permissions-l? (ftp-user-ftp-perm user))
+                                                           #t)
+                                                       (bitwise-bit-set? sysbytes i))
+                                                  "l" ""))
+                                          (if file?
+                                              (if (and (if (ftp-user-ftp-perm user)
+                                                           (ftp-permissions-a? (ftp-user-ftp-perm user))
+                                                           #t)
+                                                       (bitwise-bit-set? sysbytes (sub1 i)))
+                                                  "a" "")
+                                              (if (and (if (ftp-user-ftp-perm user)
+                                                           (ftp-permissions-c? (ftp-user-ftp-perm user))
+                                                           #t)
+                                                       (bitwise-bit-set? sysbytes (sub1 i)))
+                                                  "c" ""))
+                                          (if (and parent-info
+                                                   (bitwise-bit-set? parent-sysbytes (sub1 p)))
+                                              (string-append
+                                               (if (and file? 
+                                                        (if (ftp-user-ftp-perm user)
+                                                            (ftp-permissions-c? (ftp-user-ftp-perm user))
+                                                            #t))
+                                                   "w" "")
+                                               (if (or (not (ftp-user-ftp-perm user))
+                                                       (ftp-permissions-f? (ftp-user-ftp-perm user)))
+                                                   "f" "")
+                                               (if (or (not (ftp-user-ftp-perm user))
+                                                       (ftp-permissions-d? (ftp-user-ftp-perm user)))
+                                                   "d" ""))
+                                              "")))))
                            "")
                        " "
                        (if full-path? ftp-path name))))
@@ -1721,6 +1771,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define ssl-protocol/c (or/c ssl-protocol? not))
 (define not-null-string/c (and/c string? (λ(str) (not (string=? str "")))))
 (define file-path/c (or/c path-string? not))
+(define ftp-perm/c (or/c symbol? not))
 
 (define/contract ftp-server%
   (class/c (init-field [welcome-message         not-null-string/c]
@@ -1744,8 +1795,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [default-root-dir        not-null-string/c]
                        [default-locale-encoding string?]
                        [log-file                file-path/c])
-           [useradd (not-null-string/c string? exact-nonnegative-integer? exact-nonnegative-integer?
-                                       not-null-string/c (non-empty-listof not-null-string/c) string? . ->m . void?)]
+           [useradd (not-null-string/c string? 
+                                       exact-nonnegative-integer? exact-nonnegative-integer?
+                                       ftp-perm/c
+                                       not-null-string/c (non-empty-listof not-null-string/c) 
+                                       string? . ->m . void?)]
            [groupadd (not-null-string/c exact-nonnegative-integer? (listof not-null-string/c) . ->m . void?)])
   
   (class (ftp-utils% object%)
@@ -1786,8 +1840,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (useradd login pass uid gid [root-dir "/"] [home-dirs '("/")] [info ""])
-      (ftp-useradd users&groups login pass uid gid root-dir home-dirs info))
+    (define/public (useradd login pass uid gid [ftp-perm #f] [root-dir "/"] [home-dirs '("/")] [info ""])
+      (ftp-useradd users&groups login pass uid gid ftp-perm root-dir home-dirs info))
     
     (define/public (groupadd name gid users)
       (ftp-groupadd users&groups name gid users))
