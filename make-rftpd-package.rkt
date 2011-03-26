@@ -1,6 +1,6 @@
 #|
 
-RFTPd Package Builder v1.4
+RFTPd Package Builder v1.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -88,6 +88,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (create-embedding-executable 
      dest-exe
      #:modules '((#f (file "rftpd.rkt")))
+     #:cmdline '("-U" "--")
      #:literal-expression
      (compile '(namespace-require ''rftpd)))
     (assemble-distribution package-dir (list dest-exe)))
