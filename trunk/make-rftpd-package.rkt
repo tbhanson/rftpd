@@ -1,6 +1,6 @@
 #|
 
-RFTPd Package Builder v1.0.3
+RFTPd Package Builder v1.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -33,11 +33,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define package-dir "rftpd-package")
 (define compiled-dir "compiled")
 (define temp-dir (find-system-path 'temp-dir))
-(define dest-exe (build-path temp-dir "rftpd.exe"))
-(define logs-dir (build-path package-dir "logs"))
+(define dest-exe (build-path temp-dir 
+                             (if (eq? (system-type) 'windows) 
+                                 "rftpd.exe"
+                                 "rftpd")))
 (define certs-src "certs")
 (define certs-dest (build-path package-dir "certs"))
-(define conf-src "conf")
+(define conf-src (if (eq? (system-type) 'windows)
+                     "conf"
+                     "conf-unix"))
 (define conf-dest (build-path package-dir "conf"))
 (define license-src "LICENSE")
 (define license-dest (build-path package-dir "LICENSE"))
@@ -48,7 +52,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (display "Please wait for final assembly of the package")
 (define thd (letrec ([loop (λ() 
-                             (sleep 0.5) 
+                             (sleep 1/2) 
                              (write-char #\.)
                              (flush-output)
                              (loop))])
@@ -67,7 +71,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (delete-directory/files compiled-dir))
   
   (make-directory package-dir)
-  (make-directory logs-dir)
   (copy-directory/files conf-src conf-dest)
   (copy-directory/files certs-src certs-dest)
   (copy-file license-src license-dest)

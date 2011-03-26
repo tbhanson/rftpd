@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.2.8
+Racket FTP Server v1.2.9
 ----------------------------------------------------------------------
 
 Summary:
@@ -29,11 +29,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (require ffi/unsafe
          racket/date
          (file "debug.rkt")
+         (for-syntax (file "debug.rkt"))
          (file "lib-ssl.rkt")
          (file "utils.rkt")
          (prefix-in ftp: (file "lib-rftpd.rkt")))
-
-(date-display-format 'iso-8601)
 
 (struct ftp-srv-params
   (welcome-message
@@ -71,28 +70,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     [else
      (values void void)]))
 
-(define run-dir-path (path-only (find-system-path 'run-file)))
-
-(define (build-rtm-path path)
-  (if-drdebug 
-   path
-   (if (or (eq? (string-ref path 0) #\/)
-           (not run-dir-path))
-       path
-       (build-path run-dir-path path))))
-
 (define-syntax (os-build-rtm-path so)
   (syntax-case so ()
     [(_ path)
-     (if (eq? (system-type) 'windows)
-         #'path
-         #'(build-rtm-path (string-append "../" path)))]))
+     (if-drdebug 
+      #'path
+      (if (eq? (system-type) 'windows)
+          #'path
+          #'(string-append "../" path)))]))
 
 (define racket-ftp-server%
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.2.8 <development>"]
+    (init-field [server-name&version        "Racket FTP Server v1.2.9 <development>"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -130,7 +121,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            (when (or start? restart?
                                      (equal? (current-command-line-arguments) #()))
                              (start-servers)))]
-                        [any/c void])
+                        [any/c debug/handler])
           (when read-cmd-line?
             (command-line
              #:program "rftpd"
@@ -376,7 +367,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               ;====================
                               [passive-host&ports    (ftp:make-passive-host&ports "127.0.0.1" 40000 40999)]
                               ;====================
-                              [default-root-dir      "ftp-dir"]
+                              [default-root-dir      (os-build-rtm-path "ftp-dir")]
                               ;====================
                               [log-file              (os-build-rtm-path (format-file-name "logs/rftpd.log"))]
                               [users-file            (os-build-rtm-path "conf/rftpd.users")]
@@ -395,7 +386,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (set! port (and (ftp:port-number? (third param)) (third param))))
                                ((ssl-protocol&certificate)
                                 (set! encryption (and (ftp:ssl-protocol? (second param)) (second param)))
-                                (set! certificate (build-rtm-path (third param))))
+                                (set! certificate (third param)))
                                ((passive-host&ports)
                                 (set! passive-host&ports 
                                       (ftp:make-passive-host&ports (second param) 
@@ -416,7 +407,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                ((default-root-dir)
                                 (set! default-root-dir (second param)))
                                ((log-file)
-                                (set! log-file (build-rtm-path (format-file-name (second param)))))))
+                                (set! log-file (format-file-name (second param))))))
                            (cddr param))
                           (hash-set! ftp-servers-params id (ftp-srv-params welcome-message
                                                                            host
@@ -444,7 +435,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (set! control-port (and (ftp:port-number? (third param)) (third param))))
                              ((ssl-protocol&certificate)
                               (set! control-encryption (and (ftp:ssl-protocol? (second param)) (second param)))
-                              (set! control-certificate (build-rtm-path (third param))))
+                              (set! control-certificate (third param)))
                              ((passwd)
                               (set! control-passwd (second param)))
                              ((bad-admin-auth-sleep-sec)
@@ -481,5 +472,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ;-----------------------------------
 ;              BEGIN
 ;-----------------------------------
+(date-display-format 'iso-8601)
+(unless-drdebug
+ (let ([run-dir-path (path-only (find-system-path 'run-file))])
+   (when run-dir-path
+     (current-directory run-dir-path))))
 (send (new racket-ftp-server% [read-cmd-line? #t]) main)
-
