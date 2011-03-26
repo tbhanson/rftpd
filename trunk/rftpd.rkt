@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.2.9
+Racket FTP Server v1.3.0
 ----------------------------------------------------------------------
 
 Summary:
@@ -83,7 +83,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.2.9 <development>"]
+    (init-field [server-name&version        "Racket FTP Server v1.3.0 <development>"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -148,8 +148,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              [("-e" "--echo")
               "Show echo."
               (set! echo? #t)]))
-          (unless (or show-banner? echo? ci-interactive?) 
-            (HideConsole))
+          (unless-drdebug
+           (when (and start? (not (or show-banner? echo? ci-interactive?)))
+             (HideConsole)))
           (when show-banner?
             (display-lines (list server-name&version copyright "")))
           (load-config config-file)
