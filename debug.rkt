@@ -1,6 +1,6 @@
 #|
 
-RFTPd Debug Library v1.0.0
+RFTPd Debug Library v1.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -37,6 +37,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (syntax-case so ()
     [(_ exp1 exp2)
      (mcr:if-drdebug #'exp1 #'exp2)]))
+
+(define-syntax-rule (when-drdebug . body)
+  (if-drdebug (begin . body) (void)))
+
+(define-syntax-rule (unless-drdebug . body)
+  (if-drdebug (void) (begin . body)))
 
 (define-syntax (debug/handler so)
   (mcr:if-drdebug (syntax-case so ()

@@ -51,7 +51,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     [(not (memq (string-ref str i) ws))
      (substring str i)]))
 
-(define (delete-rws str [ws '(#\space #\tab)])
+(define (delete-rws str [ws '(#\space #\tab)]);error!
   (do [(i (string-length str) (sub1 i))]
     [(not (memq (string-ref str (sub1 i)) ws))
      (substring str 0 i)]))

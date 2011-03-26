@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.4.7
+Racket FTP Server Library v1.4.8
 ----------------------------------------------------------------------
 
 Summary:
@@ -1770,7 +1770,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define host/c (or/c host-string? not))
 (define ssl-protocol/c (or/c ssl-protocol? not))
 (define not-null-string/c (and/c string? (λ(str) (not (string=? str "")))))
-(define file-path/c (or/c path-string? not))
+(define path/c (or/c path-string? not))
 (define ftp-perm/c (or/c symbol? not))
 
 (define/contract ftp-server%
@@ -1779,7 +1779,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [server-host             host/c]
                        [server-port             port-number?]
                        [server-encryption       ssl-protocol/c]
-                       [server-certificate      file-path/c]
+                       [server-certificate      path/c]
                        
                        [max-allow-wait          exact-nonnegative-integer?]
                        [transfer-wait-time      exact-nonnegative-integer?]
@@ -1792,13 +1792,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        
                        [pasv-host&ports         passive-host&ports?]
                        
-                       [default-root-dir        not-null-string/c]
+                       [default-root-dir        path-string?]
                        [default-locale-encoding string?]
-                       [log-file                file-path/c])
+                       [log-file                path/c])
            [useradd (not-null-string/c string? 
                                        exact-nonnegative-integer? exact-nonnegative-integer?
                                        ftp-perm/c
-                                       not-null-string/c (non-empty-listof not-null-string/c) 
+                                       path-string? (non-empty-listof path-string?) 
                                        string? . ->m . void?)]
            [groupadd (not-null-string/c exact-nonnegative-integer? (listof not-null-string/c) . ->m . void?)])
   
@@ -1862,10 +1862,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (set! server-params (ftp-server-params pasv-host&ports
                                                  server-host
                                                  default-server-responses
-                                                 default-root-dir
+                                                 (if (path? default-root-dir)
+                                                     (path->string default-root-dir)
+                                                     default-root-dir)
                                                  default-locale-encoding
-                                                 (if log-file 
-                                                     (open-output-file log-file #:exists 'append)
+                                                 (if log-file
+                                                     (begin
+                                                       (unless (file-exists? log-file)
+                                                         (make-directory* (path-only log-file)))
+                                                       (open-output-file log-file #:exists 'append))
                                                      (current-output-port))
                                                  (make-hash) ;bad-auth
                                                  bad-auth-sleep-sec
