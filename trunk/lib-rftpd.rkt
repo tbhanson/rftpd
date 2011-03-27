@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.4.8
+Racket FTP Server Library v1.4.9
 ----------------------------------------------------------------------
 
 Summary:
@@ -854,7 +854,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          
          (define (read-ftp-sys-info ftp-path full-ftp-sys-file-spath)
            (let* ([info (ftp-file-or-dir/full-info full-ftp-sys-file-spath)]
-                  [sysbytes (vector-ref info 0)])
+                  [sysbytes (vector-ref info 0)]
+                  [login (uid->login users&groups (vector-ref info 1))]
+                  [grpname (gid->group-name users&groups (vector-ref info 2))])
              `(,(string (if (bitwise-bit-set? sysbytes 8) #\r #\-)
                         (if (bitwise-bit-set? sysbytes 7) #\w #\-)
                         (if (bitwise-bit-set? sysbytes 6) #\x #\-))
@@ -864,8 +866,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                ,(string (if (bitwise-bit-set? sysbytes 2) #\r #\-)
                         (if (bitwise-bit-set? sysbytes 1) #\w #\-)
                         (if (bitwise-bit-set? sysbytes 0) #\x #\-))
-               ,(uid->login users&groups (vector-ref info 1)) 
-               ,(gid->group-name users&groups (vector-ref info 2)) 
+               ,(if login
+                    login
+                    (number->string (vector-ref info 1)))
+               ,(if grpname
+                    grpname
+                    (number->string (vector-ref info 2)))
                ,ftp-path)))
          
          (define (read-ftp-dir-sys-info ftp-path spath)
