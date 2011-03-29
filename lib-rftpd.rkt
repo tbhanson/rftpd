@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.4.9
+Racket FTP Server Library v1.5.0
 ----------------------------------------------------------------------
 
 Summary:
@@ -410,8 +410,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (with-handlers ([any/c (λ (e) (print-abort))])
                       (call-with-output-file new-file-full-path
                         (λ (fout)
-                          (unless (file-exists? (string-append new-file-full-path ftp-vfs-file-spath))
-                            (ftp-mksysfile (string-append new-file-full-path ftp-vfs-file-spath)
+                          (unless (file-exists? (get-sysfile-path/file new-file-full-path))
+                            (ftp-mksysfile (get-sysfile-path/file new-file-full-path)
                                            (ftp-user-uid userstruct) (ftp-user-gid userstruct)))
                           (let-values ([(in out) (tcp-connect host port)])
                             (print-connect)
@@ -445,8 +445,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (with-handlers ([any/c (λ (e) (print-abort))])
                     (call-with-output-file new-file-full-path
                       (λ (fout)
-                        (unless (file-exists? (string-append new-file-full-path ftp-vfs-file-spath))
-                          (ftp-mksysfile (string-append new-file-full-path ftp-vfs-file-spath)
+                        (unless (file-exists? (get-sysfile-path/file new-file-full-path))
+                          (ftp-mksysfile (get-sysfile-path/file new-file-full-path)
                                          (ftp-user-uid userstruct) (ftp-user-gid userstruct)))
                         (let-values ([(in out) (net-accept pasv-listener)])
                           (print-connect)
@@ -853,7 +853,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (number->string (date-year dte)))))
          
          (define (read-ftp-sys-info ftp-path full-ftp-sys-file-spath)
-           (let* ([info (ftp-file-or-dir/full-info full-ftp-sys-file-spath)]
+           (let* ([info (ftp-sysfile/full-info full-ftp-sys-file-spath)]
                   [sysbytes (vector-ref info 0)]
                   [login (uid->login users&groups (vector-ref info 1))]
                   [grpname (gid->group-name users&groups (vector-ref info 2))])
@@ -875,11 +875,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                ,ftp-path)))
          
          (define (read-ftp-dir-sys-info ftp-path spath)
-           (let ([info (read-ftp-sys-info ftp-path (string-append spath ftp-vfs-dir-spath))])
+           (let ([info (read-ftp-sys-info ftp-path (get-sysfile-path/dir spath))])
              (string-append "d" (car info) (second info) (third info) " 2 " (fourth info) " " (fifth info))))
          
          (define (read-ftp-file-sys-info ftp-path spath)
-           (let ([info (read-ftp-sys-info ftp-path (string-append spath ftp-vfs-file-spath))])
+           (let ([info (read-ftp-sys-info ftp-path (get-sysfile-path/file spath))])
              (string-append "-" (car info) (second info) (third info) " 1 " (fourth info) " " (fifth info))))
          
          (define (dlst ftp-dir-name)
@@ -1047,7 +1047,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                (print-crlf/encoding** 'DELDIR-NOT-EMPTY)
                                (with-handlers ([exn:fail:filesystem? (λ (e)
                                                                        (print-crlf/encoding* "550 System error."))])
-                                 (delete-file (string-append spath ftp-vfs-dir-spath))
+                                 (delete-file (get-sysfile-path/dir spath))
                                  (delete-directory spath)
                                  (print-log-event (format "Remove a directory ~a" (simplify-ftp-path ftp-path)))
                                  (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RMD"))))
@@ -1109,7 +1109,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (if (ftp-dir-allow-delete*? (string-append *root-dir* (simplify-ftp-path ftp-path 1)))
                      (with-handlers ([exn:fail:filesystem? (λ (e)
                                                              (print-crlf/encoding* "550 System error."))])
-                       (delete-file (string-append spath ftp-vfs-file-spath))
+                       (delete-file (get-sysfile-path/file spath))
                        (delete-file spath)
                        (print-log-event (format "Delete a file ~a" (simplify-ftp-path ftp-path)))
                        (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "DELE"))
@@ -1137,16 +1137,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                    (arithmetic-shift (ch->num (second cl)) 3)
                                    (ch->num (third cl))))]
                   [fchmod 
-                   (λ (ftp-spath target)
+                   (λ (ftp-spath file?)
                      (if (ftp-perm-allow? ftp-spath)
                          (let* ([full-path (string-append *root-dir* ftp-spath)]
-                                [info (ftp-file-or-dir/full-info (string-append full-path target))]
+                                [info (ftp-sysfile/full-info ((if file? 
+                                                                  get-sysfile-path/file
+                                                                  get-sysfile-path/dir)
+                                                              full-path))]
                                 [uid (vector-ref info 1)]
                                 [gid (vector-ref info 2)])
                            (if (or (= uid (ftp-user-uid *userstruct*))
                                    (member-ftp-group/gid? *client-struct* root-gid))
                                (begin
-                                 (ftp-mksysfile (string-append full-path target)
+                                 (ftp-mksysfile ((if file? 
+                                                     get-sysfile-path/file
+                                                     get-sysfile-path/dir)
+                                                 full-path)
                                                 uid gid (get-permis permis))
                                  (print-log-event (format "Change the permissions of a ~a" 
                                                           (simplify-ftp-path spath)))
@@ -1155,26 +1161,32 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
              (cond
                ((ftp-file-exists? (string-append *root-dir* spath))
-                (fchmod spath ftp-vfs-file-spath))
+                (fchmod spath #t))
                ((ftp-dir-exists? (string-append *root-dir* spath))
-                (fchmod spath ftp-vfs-dir-spath))
+                (fchmod spath #f))
                (else
                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
          
          (define (chown owner path)
            (let* ([spath (build-ftp-spath* path)]
                   [fchown 
-                   (λ (ftp-spath target)
+                   (λ (ftp-spath file?)
                      (if (ftp-perm-allow? ftp-spath)
                          (let* ([full-path (string-append *root-dir* ftp-spath)]
-                                [info (ftp-file-or-dir/full-info (string-append full-path target))]
+                                [info (ftp-sysfile/full-info ((if file? 
+                                                                  get-sysfile-path/file
+                                                                  get-sysfile-path/dir)
+                                                              full-path))]
                                 [perm (vector-ref info 0)]
                                 [gid (vector-ref info 2)])
                            (if (and (userinfo/login users&groups owner)
                                     (or (member-ftp-group/gid? *client-struct* root-gid)
                                         (string=? owner *login*)))
                                (begin
-                                 (ftp-mksysfile (string-append full-path target)
+                                 (ftp-mksysfile ((if file? 
+                                                     get-sysfile-path/file
+                                                     get-sysfile-path/dir)
+                                                 full-path)
                                                 (login->uid users&groups owner) gid perm)
                                  (print-log-event (format "Change the owner of a ~a" 
                                                           (simplify-ftp-path spath)))
@@ -1183,26 +1195,32 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
              (cond
                ((ftp-file-exists? (string-append *root-dir* spath))
-                (fchown spath ftp-vfs-file-spath))
+                (fchown spath #t))
                ((ftp-dir-exists? (string-append *root-dir* spath))
-                (fchown spath ftp-vfs-dir-spath))
+                (fchown spath #f))
                (else
                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
          
          (define (chgrp group path)
            (let* ([spath (build-ftp-spath* path)]
                   [fchgrp
-                   (λ (ftp-spath target)
+                   (λ (ftp-spath file?)
                      (if (ftp-perm-allow? ftp-spath)
                          (let* ([full-path (string-append *root-dir* ftp-spath)]
-                                [info (ftp-file-or-dir/full-info (string-append full-path target))]
+                                [info (ftp-sysfile/full-info ((if file? 
+                                                                  get-sysfile-path/file
+                                                                  get-sysfile-path/dir)
+                                                              full-path))]
                                 [perm (vector-ref info 0)]
                                 [uid (vector-ref info 1)])
                            (if (and (groupinfo/name users&groups group)
                                     (or (member-ftp-group/name? *client-struct* group)
                                         (member-ftp-group/gid? *client-struct* root-gid)))
                                (begin
-                                 (ftp-mksysfile (string-append full-path target)
+                                 (ftp-mksysfile ((if file? 
+                                                     get-sysfile-path/file
+                                                     get-sysfile-path/dir)
+                                                 full-path)
                                                 uid (group-name->gid users&groups group) perm)
                                  (print-log-event (format "Change the group of a ~a" 
                                                           (simplify-ftp-path spath)))
@@ -1211,9 +1229,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))])
              (cond
                ((ftp-file-exists? (string-append *root-dir* spath))
-                (fchgrp spath ftp-vfs-file-spath))
+                (fchgrp spath #t))
                ((ftp-dir-exists? (string-append *root-dir* spath))
-                (fchgrp spath ftp-vfs-dir-spath))
+                (fchgrp spath #f))
                (else
                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))]
         
@@ -1411,8 +1429,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (with-handlers ([exn:fail:filesystem?
                                                (λ (e) (print-crlf/encoding** 'CANT-RENAME))])
                                 (when file?
-                                  (rename-file-or-directory (string-append old-path ftp-vfs-file-spath)
-                                                            (string-append new-path ftp-vfs-file-spath)))
+                                  (rename-file-or-directory (get-sysfile-path/file old-path)
+                                                            (get-sysfile-path/file new-path)))
                                 (rename-file-or-directory old-path new-path)
                                 (print-log-event (format "Rename the file or directory from ~a to ~a"
                                                          (real-path->ftp-path old-path *root-dir*)
@@ -1637,14 +1655,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              [parent-path (and (not (string=? "/" ftp-path))
                                (string-append *root-dir* (simplify-ftp-path ftp-path 1)))]
              [parent-info (and parent-path
-                               (ftp-file-or-dir/full-info 
-                                (string-append parent-path ftp-vfs-dir-spath)))]
+                               (ftp-sysfile/full-info (get-sysfile-path/dir parent-path)))]
              [name (path->string (file-name-from-path ftp-path))]
              [file? (file-exists? path)]
-             [info (ftp-file-or-dir/full-info (string-append path
-                                                             (if file?
-                                                                 ftp-vfs-file-spath
-                                                                 ftp-vfs-dir-spath)))]
+             [info (ftp-sysfile/full-info ((if file? 
+                                               get-sysfile-path/file
+                                               get-sysfile-path/dir)
+                                           path))]
              [sysbytes (vector-ref info 0)]
              [parent-sysbytes (and parent-info (vector-ref parent-info 0))]
              [user *userstruct*]
