@@ -1,6 +1,6 @@
 #|
 
-RFTPd VFS Library v1.0.5
+RFTPd VFS Library v1.0.6
 ----------------------------------------------------------------------
 
 Summary:
@@ -34,7 +34,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      ftp-groups/gid
                      ftp-vfs-obj-allow-read?
                      ftp-vfs-obj-allow-write?
-                     ftp-vfs-obj-allow-execute?))
+                     ftp-vfs-obj-allow-execute?
+                     file-path->sysfile-path
+                     dir-path->sysfile-path
+                     ftp-vfs-file-extension
+                     ftp-vfs-dir-extension
+                     ftp-vfs-file-spath
+                     ftp-vfs-dir-spath))
 
 (struct ftp-user (login pass uid gid ftp-perm root-dir home-dirs info))
 (struct ftp-group (name gid users))
@@ -65,6 +71,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define-syntax-rule (ftp-user/ftp-perm clientStruct)
   (ftp-user-ftp-perm (ftp-client-userStruct clientStruct)))
+
+(define-syntax-rule (file-path->sysfile-path spath)
+  (string-append spath ftp-vfs-file-spath))
+
+(define-syntax-rule (dir-path->sysfile-path spath)
+  (string-append spath ftp-vfs-dir-spath))
 
 ;=============================
 
@@ -155,19 +167,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define (real-path->ftp-path real-path root-dir [drop-tail-elem 0])
   (simplify-ftp-path (substring real-path (string-length root-dir)) drop-tail-elem))
 
-(define (ftp-file-or-dir/full-info sys-file)
+(define (ftp-sysfile/full-info sys-file)
   (call-with-input-file sys-file
     (λ (in)
       (vector (integer-bytes->integer (read-bytes 2 in) #f)     ; sysbytes
               (integer-bytes->integer (read-bytes 4 in) #f)     ; uid
               (integer-bytes->integer (read-bytes 4 in) #f))))) ; gid
 
-(define (ftp-file-or-dir/sysbytes sys-file)
+(define (ftp-sysfile/sysbytes sys-file)
   (call-with-input-file sys-file
     (λ (in)
       (integer-bytes->integer (read-bytes 2 in) #f))))
 
-(define (ftp-file-or-dir/sysbytes+uid sys-file)
+(define (ftp-sysfile/sysbytes+uid sys-file)
   (call-with-input-file sys-file
     (λ (in)
       (vector (integer-bytes->integer (read-bytes 2 in) #f)
@@ -176,7 +188,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define (ftp-mkdir spath [uid 0][gid root-gid][permissions #b111101101])
   (unless (directory-exists? spath)
     (make-directory spath))
-  (ftp-mksysfile (string-append spath ftp-vfs-dir-spath)
+  (ftp-mksysfile (dir-path->sysfile-path spath)
                  uid gid permissions))
 
 (define (ftp-mksysfile sysfile [uid 0][gid root-gid][permissions #b110100100])
@@ -187,13 +199,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       [write-bytes (integer->integer-bytes gid 4 #f) out])
     #:exists 'truncate))
 
+(define (get-sysfile-path/file spath)
+  (file-path->sysfile-path spath))
+
+(define (get-sysfile-path/dir spath)
+  (dir-path->sysfile-path spath))
+
 (define (ftp-dir-exists? spath)
   (and (directory-exists? spath)
-       (file-exists? (string-append spath ftp-vfs-dir-spath))))
+       (file-exists? (dir-path->sysfile-path spath))))
 
 (define (ftp-file-exists? spath)
   (and (file-exists? spath)
-       (file-exists? (string-append spath ftp-vfs-file-spath))))
+       (file-exists? (file-path->sysfile-path spath))))
 
 (define (ftp-file-name-safe? spath)
   (not (and (filename-extension spath)
@@ -231,7 +249,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          (group-name->gid (ftp-client-users&groups clientStruct) group-name)))
 
 (define (ftp-vfs-obj-allow-read? full-ftp-sysfile-spath clientStruct)
-  (let ([info (ftp-file-or-dir/full-info full-ftp-sysfile-spath)])
+  (let ([info (ftp-sysfile/full-info full-ftp-sysfile-spath)])
     (cond
       ((= (vector-ref info 1) (ftp-user/uid clientStruct))
        (bitwise-bit-set? (vector-ref info 0) 8))
@@ -241,7 +259,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
        (bitwise-bit-set? (vector-ref info 0) 2)))))
 
 (define (ftp-vfs-obj-allow-write? full-ftp-sysfile-spath clientStruct)
-  (let ([info (ftp-file-or-dir/full-info full-ftp-sysfile-spath)])
+  (let ([info (ftp-sysfile/full-info full-ftp-sysfile-spath)])
     (cond
       ((= (vector-ref info 1) (ftp-user/uid clientStruct))
        (bitwise-bit-set? (vector-ref info 0) 7))
@@ -251,7 +269,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
        (bitwise-bit-set? (vector-ref info 0) 1)))))
 
 (define (ftp-vfs-obj-allow-execute? full-ftp-sysfile-spath clientStruct)
-  (let ([info (ftp-file-or-dir/full-info full-ftp-sysfile-spath)])
+  (let ([info (ftp-sysfile/full-info full-ftp-sysfile-spath)])
     (cond
       ((= (vector-ref info 1) (ftp-user/uid clientStruct))
        (bitwise-bit-set? (vector-ref info 0) 6))
@@ -270,11 +288,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (if (null? dirlist)
                       #t
                       (let ([dir (string-append curr "/" (car dirlist))])
-                        (and (ftp-vfs-obj-allow-execute? (string-append dir ftp-vfs-dir-spath) clientStruct)
+                        (and (ftp-vfs-obj-allow-execute? (dir-path->sysfile-path dir) clientStruct)
                              (test dir (cdr dirlist))))))])
         (let ([dirs (filter (λ (s) (not (string=? s "")))
                             (regexp-split #rx"[/\\\\]+" (simplify-path ftp-full-spath #f)))])
-          (and (ftp-vfs-obj-allow-execute? (string-append ftp-root-dir ftp-vfs-dir-spath) clientStruct)
+          (and (ftp-vfs-obj-allow-execute? (dir-path->sysfile-path ftp-root-dir) clientStruct)
                (or (null? dirs)
                    (test ftp-root-dir (drop-right dirs drop-tail-elem))))))))
 
@@ -283,47 +301,47 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (and (if (ftp-user/ftp-perm clientStruct)
                (ftp-permissions-l? (ftp-user/ftp-perm clientStruct))
                #t)
-           (ftp-vfs-obj-allow-read? (string-append spath ftp-vfs-dir-spath) clientStruct))))
+           (ftp-vfs-obj-allow-read? (dir-path->sysfile-path spath) clientStruct))))
 
 (define (ftp-dir-allow-store&append? spath clientStruct)
   (or (member-ftp-group/gid? clientStruct root-gid)
       (and (if (ftp-user/ftp-perm clientStruct)
                (ftp-permissions-c? (ftp-user/ftp-perm clientStruct))
                #t)
-           (ftp-vfs-obj-allow-write? (string-append spath ftp-vfs-dir-spath) clientStruct))))
+           (ftp-vfs-obj-allow-write? (dir-path->sysfile-path spath) clientStruct))))
 
 (define (ftp-dir-allow-mkdir? spath clientStruct)
   (or (member-ftp-group/gid? clientStruct root-gid)
       (and (if (ftp-user/ftp-perm clientStruct)
                (ftp-permissions-m? (ftp-user/ftp-perm clientStruct))
                #t)
-           (ftp-vfs-obj-allow-write? (string-append spath ftp-vfs-dir-spath) clientStruct))))
+           (ftp-vfs-obj-allow-write? (dir-path->sysfile-path spath) clientStruct))))
 
 (define (ftp-dir-allow-rename? spath clientStruct)
   (or (member-ftp-group/gid? clientStruct root-gid)
       (and (if (ftp-user/ftp-perm clientStruct)
                (ftp-permissions-f? (ftp-user/ftp-perm clientStruct))
                #t)
-           (ftp-vfs-obj-allow-write? (string-append spath ftp-vfs-dir-spath) clientStruct))))
+           (ftp-vfs-obj-allow-write? (dir-path->sysfile-path spath) clientStruct))))
 
 (define (ftp-dir-allow-delete? spath clientStruct)
   (or (member-ftp-group/gid? clientStruct root-gid)
       (and (if (ftp-user/ftp-perm clientStruct)
                (ftp-permissions-d? (ftp-user/ftp-perm clientStruct))
                #t)
-           (ftp-vfs-obj-allow-write? (string-append spath ftp-vfs-dir-spath) clientStruct))))
+           (ftp-vfs-obj-allow-write? (dir-path->sysfile-path spath) clientStruct))))
 
 (define (ftp-dir-allow-execute? spath clientStruct)
   (or (member-ftp-group/gid? clientStruct root-gid)
-      (ftp-vfs-obj-allow-execute? (string-append spath ftp-vfs-dir-spath) clientStruct)))
+      (ftp-vfs-obj-allow-execute? (dir-path->sysfile-path spath) clientStruct)))
 
 (define (ftp-file-allow-read? spath clientStruct)
   (or (member-ftp-group/gid? clientStruct root-gid)
-      (ftp-vfs-obj-allow-read? (string-append spath ftp-vfs-file-spath) clientStruct)))
+      (ftp-vfs-obj-allow-read? (file-path->sysfile-path spath) clientStruct)))
 
 (define (ftp-file-allow-append? spath clientStruct)
   (or (member-ftp-group/gid? clientStruct root-gid)
       (and (if (ftp-user/ftp-perm clientStruct)
                (ftp-permissions-a? (ftp-user/ftp-perm clientStruct))
                #t)
-           (ftp-vfs-obj-allow-write? (string-append spath ftp-vfs-file-spath) clientStruct))))
+           (ftp-vfs-obj-allow-write? (file-path->sysfile-path spath) clientStruct))))

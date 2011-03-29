@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.3.0
+Racket FTP Server v1.3.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -83,7 +83,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.3.0 <development>"]
+    (init-field [server-name&version        "Racket FTP Server v1.3.1 <development>"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -147,7 +147,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (set! show-banner? #t)]
              [("-e" "--echo")
               "Show echo."
-              (set! echo? #t)]))
+              (set! echo? #t)]
+             [("-f" "--config") file-path
+                                "Use an alternate configuration file."
+                                (set! config-file file-path)]))
           (unless-drdebug
            (when (and start? (not (or show-banner? echo? ci-interactive?)))
              (HideConsole)))
@@ -235,7 +238,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          [log-file                (ftp-srv-params-log-file params)])])
            (hash-set! ftp-servers id srv)
            (start! id srv))))
-      (thread-wait (server-control)))
+      (when (positive? (hash-count ftp-servers-params))
+        (thread-wait (server-control))))
     
     (define/private (server-control)
       (let ([listener (ssl-listen control-port (random 123456789) #t control-host control-encryption)])
@@ -408,7 +412,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                ((default-root-dir)
                                 (set! default-root-dir (second param)))
                                ((log-file)
-                                (set! log-file (format-file-name (second param))))))
+                                (set! log-file (format-file-name (second param))))
+                               ((users-file)
+                                (set! users-file (second param)))
+                               ((groups-file)
+                                (set! groups-file (second param)))))
                            (cddr param))
                           (hash-set! ftp-servers-params id (ftp-srv-params welcome-message
                                                                            host
