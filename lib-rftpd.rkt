@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.5.0
+Racket FTP Server Library v1.5.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -196,7 +196,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
      (EPSV (EN . "229 Entering Extended Passive Mode (|||~a|)")
            (RU . "229 Переход в Расширенный Пассивный Режим (|||~a|)"))
      (BAD-PROTOCOL (EN . "522 Bad network protocol.")
-                   (RU . "522 Неверный сетевой протокол.")))))
+                   (RU . "522 Неверный сетевой протокол."))
+     (UNKNOWN-ERROR (EN . "410 Unknown error.")
+                    (RU . "410 Неизвестная ошибка.")))))
 
 (provide/contract
  [make-passive-host&ports ((or/c IPv4? IPv6?) port-number? port-number? . -> . passive-host&ports?)])
@@ -584,13 +586,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (let loop ([request (read-request *locale-encoding* *client-input-port*)])
           (unless (eof-object? request)
             (when request
-              ;(printf "[~a] ~a\n" *client-host* request)
               (let ([cmd (string-upcase (car (regexp-match #rx"[^ ]+" request)))]
                     [params (get-params request)])
                 (if *userstruct*
                     (let ([rec (hash-ref *cmd-voc* cmd #f)])
                       (if rec
-                          ((car rec) params)
+                          (with-handlers ([any/c (λ() (print-crlf/encoding** 'UNKNOWN-ERROR))])
+                            ((car rec) params))
                           (print-crlf/encoding** 'CMD-NOT-IMPLEMENTED cmd)))
                     (case (string->symbol cmd)
                       ((USER) (USER-COMMAND params))
