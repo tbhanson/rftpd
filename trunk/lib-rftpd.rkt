@@ -591,7 +591,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (if *userstruct*
                     (let ([rec (hash-ref *cmd-voc* cmd #f)])
                       (if rec
-                          (with-handlers ([any/c (λ() (print-crlf/encoding** 'UNKNOWN-ERROR))])
+                          (with-handlers ([any/c (λ(e) (print-crlf/encoding** 'UNKNOWN-ERROR))])
                             ((car rec) params))
                           (print-crlf/encoding** 'CMD-NOT-IMPLEMENTED cmd)))
                     (case (string->symbol cmd)
