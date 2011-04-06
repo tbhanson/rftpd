@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.5.1
+Racket FTP Server Library v1.5.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -81,8 +81,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (make-hash
    '((SYNTAX-ERROR (EN . "501 ~a Syntax error in parameters or arguments.")
                    (RU . "501 ~a Синтаксическая ошибка (неверный параметр или аргумент)."))
-     (WELCOME (EN . "220 ~a")
-              (RU . "220 ~a"))
      (CMD-NOT-IMPLEMENTED (EN . "502 ~a not implemented.")
                           (RU . "502 Команда ~a не реализована."))
      (PLEASE-LOGIN (EN . "530 Please login with USER and PASS.")
@@ -279,6 +277,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/public (print-crlf/encoding encoding str out)
       (print/encoding encoding str out)
+      (write-bytes #"\r\n" out)
+      (flush-output out))
+    
+    (define/public (printf-crlf/encoding encoding out form . args)
+      (print/encoding encoding (apply format form args) out)
       (write-bytes #"\r\n" out)
       (flush-output out))
     
@@ -482,6 +485,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (inherit get-params
              print/encoding
              print-crlf/encoding
+             printf-crlf/encoding
              print*-crlf/encoding
              string->bytes/encoding
              read-request
@@ -582,7 +586,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (accept-client-request [reset-timer void])
       (with-handlers ([any/c debug/handler])
-        (print-crlf/encoding** 'WELCOME welcome-message)
+        (do ([p (regexp-split #rx"\n|\r" welcome-message) (cdr p)])
+          [(null? (cdr p))
+           (printf-crlf/encoding *locale-encoding* *client-output-port* "220 ~a" (car p))]
+          (printf-crlf/encoding *locale-encoding* *client-output-port* "220-~a" (car p)))
         (let loop ([request (read-request *locale-encoding* *client-input-port*)])
           (unless (eof-object? request)
             (when request

@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.3.1
+Racket FTP Server v1.3.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -83,7 +83,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.3.1 <development>"]
+    (init-field [server-name&version        "Racket FTP Server v1.3.2"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
