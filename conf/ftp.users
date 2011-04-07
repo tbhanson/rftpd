@@ -1,0 +1,6 @@
+(ftp-server-users
+;   Full Name      | Login     | Password   | Group     | Home Dirs   | Root Dir
+  ["anonymous user" "anonymous" ""           "anonymous" ("/")          "anonymous-root-dir"]
+  ["anonymous user" "ftp"       ""           "anonymous" ("/")          "anonymous-root-dir"]
+  ["sample usr"     "usr"       "usr"        "racket"    ("/home/usr/") "ftp-dir"]
+)

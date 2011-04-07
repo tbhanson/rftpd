@@ -1,6 +1,0 @@
-(ftp-server-users
-;   Login     | Password |  UID  |  GID  | FTP/Perm |      Root Dir      | Home Dirs |    Info
-  ["root"      "1234"         0       0       #f     "ftp-vfs"             ("/")       "admin"]
-  ["ftp"       ""          1000     100       lr     "ftp-vfs/anonymous"   ("/")       "anonymous user"]
-  ["anonymous" ""          1001     100       lr     "ftp-vfs/anonymous"   ("/")       "anonymous user"]
-  ["usr"       "usr"       2000     200       #f     "ftp-vfs/usr"         ("/home")   "sample user"])
