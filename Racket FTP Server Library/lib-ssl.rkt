@@ -1,25 +1,3 @@
-#|
-Summary:
-This file is part of Racket FTP Server. Based on a OpenSSL Racket
-library.
-
-License:
-Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>
-All Rights Reserved
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
-|#
 
 ;; Disabled when `enforce-retry?' is #f:
 ;;  Warn clients: when a (non-blocking) write fails to write all the
@@ -580,8 +558,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     ;; Flush in progress; try again later:
                     0]
                    [(mzssl-must-write mzssl)
-                    (λ (sema)
-                      (wrap-evt (semaphore-peek-evt sema) (λ (x) 0)))]
+                    => (λ (sema)
+                         (wrap-evt (semaphore-peek-evt sema) (λ (x) 0)))]
                    [(mzssl-r-closed? mzssl)
                     0]
                    [else
@@ -741,8 +719,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     #f]
                    [(mzssl-must-read mzssl)
                     ;; Read pending, so wait until it's done:
-                    (λ (sema)
-                      (wrap-evt (semaphore-peek-evt sema) (λ (x) #f)))]
+                    => (λ (sema)
+                         (wrap-evt (semaphore-peek-evt sema) (λ (x) #f)))]
                    [else
                     ;; Normal write (since no flush is active or read pending):
                     (let ([sema (mzssl-must-write mzssl)])

@@ -1,0 +1,4 @@
+Racket FTP Server v1.0.12
+Copyright (c) 2010-2011 Mikhail Mosienko  <cnet@land.ru>
+
+This is a standard ftp/ftps server with control interface, written in Racket.
