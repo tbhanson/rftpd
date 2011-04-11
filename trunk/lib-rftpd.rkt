@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.5.2
+Racket FTP Server Library v1.5.3
 ----------------------------------------------------------------------
 
 Summary:
@@ -50,9 +50,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (pasv-host&ports
    
    server-host
-   ;server-encryption  
-   ;server-certificate
-   ;server-ssl-context
    
    server-responses
    
@@ -1810,8 +1807,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        
                        [server-host             host/c]
                        [server-port             port-number?]
-                       [server-encryption       ssl-protocol/c]
-                       [server-certificate      path/c]
+                       [ssl-protocol            ssl-protocol/c]
+                       [ssl-key                 path/c]
+                       [ssl-certificate         path/c]
                        
                        [max-allow-wait          exact-nonnegative-integer?]
                        [transfer-wait-time      exact-nonnegative-integer?]
@@ -1843,8 +1841,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 
                 [server-host             "127.0.0.1"]
                 [server-port             21]
-                [server-encryption       #f]
-                [server-certificate      #f]
+                [ssl-protocol	         #f]
+                [ssl-key                 #f]
+                [ssl-certificate         #f]
                 
                 [max-allow-wait          25]
                 [transfer-wait-time      120]
@@ -1912,16 +1911,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (ftp-mkdir default-root-dir))
           (when (and server-host server-port)
             (let* ([ssl-server-ctx
-                    (and/exc server-encryption server-certificate
-                             (let ([ctx (ssl-make-server-context server-encryption)])
-                               (ssl-load-certificate-chain! ctx server-certificate default-locale-encoding)
-                               (ssl-load-private-key! ctx server-certificate #t #f default-locale-encoding)
+                    (and/exc ssl-protocol ssl-key ssl-certificate
+                             (let ([ctx (ssl-make-server-context ssl-protocol)])
+                               (ssl-load-certificate-chain! ctx ssl-certificate default-locale-encoding)
+                               (ssl-load-private-key! ctx ssl-key #t #f default-locale-encoding)
                                ctx))]
                    [ssl-client-ctx
-                    (and/exc server-encryption server-certificate
-                             (let ([ctx (ssl-make-client-context server-encryption)])
-                               (ssl-load-certificate-chain! ctx server-certificate default-locale-encoding)
-                               (ssl-load-private-key! ctx server-certificate #t #f default-locale-encoding)
+                    (and/exc ssl-protocol ssl-key ssl-certificate
+                             (let ([ctx (ssl-make-client-context ssl-protocol)])
+                               (ssl-load-certificate-chain! ctx ssl-certificate default-locale-encoding)
+                               (ssl-load-private-key! ctx ssl-key #t #f default-locale-encoding)
                                ctx))]
                    [tcp-listener (tcp-listen server-port max-allow-wait #t server-host)])
               (letrec ([main-loop (λ ()

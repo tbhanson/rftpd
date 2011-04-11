@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.3.2
+Racket FTP Server v1.3.3
 ----------------------------------------------------------------------
 
 Summary:
@@ -38,8 +38,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (welcome-message
    host
    port
-   encryption 
-   certificate 
+   ssl-protocol
+   ssl-key
+   ssl-certificate 
    max-allow-wait
    transfer-wait-time
    bad-auth-sleep-sec
@@ -83,7 +84,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.3.2"]
+    (init-field [server-name&version        "Racket FTP Server v1.3.3 <development>"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -95,7 +96,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [control-passwd             "12345"]
                 [control-host               "127.0.0.1"]
                 [control-port               41234]
-                [control-encryption         'sslv3]
+                [control-protocol           'sslv3]
+                [control-key                (os-build-rtm-path "certs/control.pem")]
                 [control-certificate        (os-build-rtm-path "certs/control.pem")]
                 [bad-admin-auth-sleep-sec   120]
                 [max-admin-passwd-attempts  5]
@@ -158,9 +160,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (display-lines (list server-name&version copyright "")))
           (load-config config-file)
           (parameterize ([current-custodian cust])
-            (let*-values ([(ssl-ctx) (let ([ctx (ssl-make-client-context control-encryption)])
+            (let*-values ([(ssl-ctx) (let ([ctx (ssl-make-client-context control-protocol)])
                                        (ssl-load-certificate-chain! ctx control-certificate default-locale-encoding)
-                                       (ssl-load-private-key! ctx control-certificate #t #f default-locale-encoding)
+                                       (ssl-load-private-key! ctx control-key #t #f default-locale-encoding)
                                        ctx)]
                           [(in out) (ssl-connect control-host control-port ssl-ctx)])
               (displayln control-passwd out)(flush-output out)
@@ -219,8 +221,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          
                          [server-host             (ftp-srv-params-host params)]
                          [server-port             (ftp-srv-params-port params)]
-                         [server-encryption       (ftp-srv-params-encryption params)]
-                         [server-certificate      (ftp-srv-params-certificate params)]
+                         [ssl-protocol            (ftp-srv-params-ssl-protocol params)]
+                         [ssl-key                 (ftp-srv-params-ssl-key params)]
+                         [ssl-certificate         (ftp-srv-params-ssl-certificate params)]
                          
                          [max-allow-wait          (ftp-srv-params-max-allow-wait params)]
                          [transfer-wait-time      (ftp-srv-params-transfer-wait-time params)]
@@ -242,9 +245,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (thread-wait (server-control))))
     
     (define/private (server-control)
-      (let ([listener (ssl-listen control-port (random 123456789) #t control-host control-encryption)])
+      (let ([listener (ssl-listen control-port (random 123456789) #t control-host control-protocol)])
         (ssl-load-certificate-chain! listener control-certificate default-locale-encoding)
-        (ssl-load-private-key! listener control-certificate #t #f default-locale-encoding)
+        (ssl-load-private-key! listener control-key #t #f default-locale-encoding)
         (letrec ([main-loop (λ ()
                               (handle-client-request listener)
                               (main-loop))])
@@ -359,8 +362,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               [welcome-message       server-name&version]
                               [host                  #f]
                               [port                  21]
-                              [encryption            #f]
-                              [certificate           (os-build-rtm-path "certs/server-1.pem")]
+                              [ssl-protocol          #f]
+                              [ssl-key               (os-build-rtm-path "certs/server-1.pem")]
+                              [ssl-certificate       (os-build-rtm-path "certs/server-1.pem")]
                               [max-allow-wait        25]
                               [transfer-wait-time    120]
                               ;====================
@@ -389,9 +393,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                ((host&port)
                                 (set! host (and (ftp:host-string? (second param)) (second param)))
                                 (set! port (and (ftp:port-number? (third param)) (third param))))
-                               ((ssl-protocol&certificate)
-                                (set! encryption (and (ftp:ssl-protocol? (second param)) (second param)))
-                                (set! certificate (third param)))
+                               [(ssl)
+                                (with-handlers ([any/c void])
+                                  (for-each 
+                                   (λ (param)
+                                     (case (car param)
+                                       [(protocol)
+                                        (set! ssl-protocol (and (ftp:ssl-protocol? (second param)) (second param)))]
+                                       [(key)
+                                        (set! ssl-key (third param))]
+                                       [(certificate)
+                                        (set! ssl-certificate (third param))]))
+                                   (cdr param)))]
                                ((passive-host&ports)
                                 (set! passive-host&ports 
                                       (ftp:make-passive-host&ports (second param) 
@@ -421,8 +434,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (hash-set! ftp-servers-params id (ftp-srv-params welcome-message
                                                                            host
                                                                            port
-                                                                           encryption 
-                                                                           certificate 
+                                                                           ssl-protocol
+                                                                           ssl-key
+                                                                           ssl-certificate
                                                                            max-allow-wait
                                                                            transfer-wait-time
                                                                            bad-auth-sleep-sec
@@ -439,18 +453,27 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        (λ (param)
                          (with-handlers ([any/c void])
                            (case (car param)
-                             ((host&port)
+                             [(host&port)
                               (set! control-host (and (ftp:host-string? (second param)) (second param)))
-                              (set! control-port (and (ftp:port-number? (third param)) (third param))))
-                             ((ssl-protocol&certificate)
-                              (set! control-encryption (and (ftp:ssl-protocol? (second param)) (second param)))
-                              (set! control-certificate (third param)))
-                             ((passwd)
-                              (set! control-passwd (second param)))
-                             ((bad-admin-auth-sleep-sec)
-                              (set! bad-admin-auth-sleep-sec (second param)))
-                             ((max-admin-passwd-attempts)
-                              (set! max-admin-passwd-attempts (second param))))))
+                              (set! control-port (and (ftp:port-number? (third param)) (third param)))]
+                             [(ssl)
+                              (with-handlers ([any/c void])
+                                (for-each 
+                                 (λ (param)
+                                   (case (car param)
+                                     [(protocol)
+                                      (set! control-protocol (and (ftp:ssl-protocol? (second param)) (second param)))]
+                                     [(key)
+                                      (set! control-key (third param))]
+                                     [(certificate)
+                                      (set! control-certificate (third param))]))
+                                 (cdr param)))]
+                             [(passwd)
+                              (set! control-passwd (second param))]
+                             [(bad-admin-auth-sleep-sec)
+                              (set! bad-admin-auth-sleep-sec (second param))]
+                             [(max-admin-passwd-attempts)
+                              (set! max-admin-passwd-attempts (second param))])))
                        (cdr param))]
                      [(default-locale-encoding)
                       (set! default-locale-encoding (second param))]))
