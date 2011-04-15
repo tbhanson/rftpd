@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.3.3
+Racket FTP Server v1.3.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -47,6 +47,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    max-auth-attempts 
    passwd-sleep-sec 
    disable-ftp-commands
+   allow-foreign-address
    passive-host&ports 
    default-root-dir
    log-file
@@ -84,7 +85,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.3.3 <development>"]
+    (init-field [server-name&version        "Racket FTP Server v1.3.4 <development>"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -234,6 +235,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          
                          [disable-ftp-commands    (ftp-srv-params-disable-ftp-commands params)]
                          
+                         [allow-foreign-address   (ftp-srv-params-allow-foreign-address params)]
+                         
                          [pasv-host&ports         (ftp-srv-params-passive-host&ports params)]
                          
                          [default-root-dir        (ftp-srv-params-default-root-dir params)]
@@ -242,6 +245,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (hash-set! ftp-servers id srv)
            (start! id srv))))
       (when (positive? (hash-count ftp-servers-params))
+        (unless-drdebug
+         (unless echo?
+           (close-output-port (current-output-port))
+           (close-input-port (current-input-port))
+           (close-output-port (current-error-port))))
         (thread-wait (server-control))))
     
     (define/private (server-control)
@@ -374,6 +382,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               ;====================
                               [disable-ftp-commands  null]
                               ;====================
+                              [allow-foreign-address #f]
+                              ;====================
                               [passive-host&ports    (ftp:make-passive-host&ports "127.0.0.1" 40000 40999)]
                               ;====================
                               [default-root-dir      (os-build-rtm-path "ftp-dir")]
@@ -422,6 +432,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (set! passwd-sleep-sec (second param)))
                                ((disable-ftp-commands)
                                 (set! disable-ftp-commands (second param)))
+                               ((allow-foreign-address)
+                                (set! allow-foreign-address (second param)))
                                ((default-root-dir)
                                 (set! default-root-dir (second param)))
                                ((log-file)
@@ -443,6 +455,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                            max-auth-attempts 
                                                                            passwd-sleep-sec 
                                                                            disable-ftp-commands
+                                                                           allow-foreign-address
                                                                            passive-host&ports 
                                                                            default-root-dir
                                                                            log-file
