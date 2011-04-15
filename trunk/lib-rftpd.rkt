@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.5.3
+Racket FTP Server Library v1.5.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -64,7 +64,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    bad-auth-sleep
    max-auth-attempts
    
-   pass-sleep))
+   pass-sleep
+   
+   allow-foreign-address)
+  #:mutable)
 
 (date-display-format 'iso-8601)
 
@@ -192,6 +195,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (RU . "229 Переход в Расширенный Пассивный Режим (|||~a|)"))
      (BAD-PROTOCOL (EN . "522 Bad network protocol.")
                    (RU . "522 Неверный сетевой протокол."))
+     (FORBIDDEN-ADDR-PORT (EN . "505 Forbidden address or port.")
+                          (RU . "505 Запрещенный адрес или порт."))
      (UNKNOWN-ERROR (EN . "410 Unknown error.")
                     (RU . "410 Неизвестная ошибка.")))))
 
@@ -795,14 +800,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (if (and params
                (regexp-match #rx"^[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+,[0-9]+$" params))
           (let* ([l (string-split-char #\, params)]
-                 [host (string-append (first l) "." (second l) "." (third l) "." (fourth l))]
+                 [delzero (λ(snum) (number->string (string->number snum)))]
+                 [host (string-append (delzero (first l)) "." (delzero (second l)) "."
+                                      (delzero (third l)) "." (delzero (fourth l)))]
                  [port (((string->number (fifth l)). * . 256). + .(string->number (sixth l)))])
             (if (and (IPv4? host) (port-number? port))
-                (begin
-                  (set! DTP 'active)
-                  ;(set! active-host&port (ftp-host&port host port))
-                  (set! active-host&port (ftp-host&port (if (private-IPv4? host) *client-host* host) port))
-                  (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "PORT"))
+                (if (and (port . > . 1024)
+                         (or allow-foreign-address
+                             (private-IPv4? host)
+                             (string=? host *client-host*)))
+                    (begin
+                      (set! DTP 'active)
+                      ;(set! active-host&port (ftp-host&port host port))
+                      (set! active-host&port (ftp-host&port (if (private-IPv4? host) *client-host* host) port))
+                      (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "PORT"))
+                    (print-crlf/encoding** 'FORBIDDEN-ADDR-PORT))
                 (print-crlf/encoding** 'SYNTAX-ERROR "")))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
@@ -1507,9 +1519,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                (and (= prt 2) (IPv6? ip)))
                            (port-number? port))
                 (raise 'syntax))
-              (set! DTP 'active)
-              (set! active-host&port (ftp-host&port ip port))
-              (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "EPRT")))
+              (if (and (port . > . 1024)
+                       (or allow-foreign-address
+                           (and (= prt 1)
+                                (private-IPv4? ip))
+                           (string=? ip *client-host*)))
+                  (begin
+                    (set! DTP 'active)
+                    (set! active-host&port (ftp-host&port (if (and (= prt 1) 
+                                                                   (private-IPv4? ip))
+                                                              *client-host* 
+                                                              ip)
+                                                          port))
+                    (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "EPRT"))
+                  (print-crlf/encoding** 'FORBIDDEN-ADDR-PORT))))
           (print-crlf/encoding** 'SYNTAX-ERROR "EPRT:")))
     
     (define (EPSV-COMMAND params)
@@ -1593,6 +1616,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define-syntax (pass-sleep-sec stx)
       #'(ftp-server-params-pass-sleep server-params))
+    
+    (define-syntax (allow-foreign-address stx)
+      #'(ftp-server-params-allow-foreign-address server-params))
     
     (define-syntax-rule (print-crlf/encoding* txt)
       (print-crlf/encoding *locale-encoding* txt *client-output-port*))
@@ -1821,6 +1847,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [disable-ftp-commands    (listof symbol?)]
                        
                        [pasv-host&ports         passive-host&ports?]
+                       [allow-foreign-address   boolean?]
                        
                        [default-root-dir        path-string?]
                        [default-locale-encoding string?]
@@ -1853,6 +1880,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [pass-sleep-sec          0]
                 
                 [disable-ftp-commands    null]
+                [allow-foreign-address   #f]
                 
                 [pasv-host&ports         (make-passive-host&ports "127.0.0.1" 40000 40999)]
                 
@@ -1906,7 +1934,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                  (make-hash) ;bad-auth
                                                  bad-auth-sleep-sec
                                                  max-auth-attempts
-                                                 pass-sleep-sec))
+                                                 pass-sleep-sec
+                                                 allow-foreign-address))
           (unless (ftp-dir-exists? default-root-dir)
             (ftp-mkdir default-root-dir))
           (when (and server-host server-port)
