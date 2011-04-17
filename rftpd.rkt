@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server v1.3.4
+Racket FTP Server v1.3.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -85,7 +85,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "Racket FTP Server v1.3.4 <development>"]
+    (init-field [server-name&version        "Racket FTP Server v1.3.5 <development>"]
                 [copyright                  "Copyright (c) 2010-2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -399,7 +399,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            (λ (param)
                              (case (car param)
                                ((welcome-message)
-                                (set! welcome-message (second param)))
+                                (set! welcome-message (format-welcome-msg (second param))))
                                ((host&port)
                                 (set! host (and (ftp:host-string? (second param)) (second param)))
                                 (set! port (and (ftp:port-number? (third param)) (third param))))
@@ -512,7 +512,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (when (eq? (car conf) 'ftp-server-groups)
                 (for-each (λ (group)
                             (send server groupadd (car group) (cadr group) (cddr group)))
-                          (cdr conf))))))))))
+                          (cdr conf))))))))
+    
+    (define/private (format-welcome-msg msg)
+      (regexp-replace #rx"%v" msg server-name&version))))
 
 ;-----------------------------------
 ;              BEGIN
