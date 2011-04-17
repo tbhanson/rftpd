@@ -1,6 +1,6 @@
 #|
 
-Racket FTP Server Library v1.5.4
+Racket FTP Server Library v1.5.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -45,29 +45,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (struct ftp-host&port (host port))
 (struct passive-host&ports (host from to))
-
-(struct ftp-server-params
-  (pasv-host&ports
-   
-   server-host
-   
-   server-responses
-   
-   default-root-dir
-   
-   default-locale-encoding
-   
-   log-output-port
-   
-   bad-auth
-   
-   bad-auth-sleep
-   max-auth-attempts
-   
-   pass-sleep
-   
-   allow-foreign-address)
-  #:mutable)
 
 (date-display-format 'iso-8601)
 
@@ -248,14 +225,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (mixin () ()
     (super-new)
     
-    (init-field [default-encoding "UTF-8"])
+    (init-field [default-locale-encoding "UTF-8"])
     
     (define/public (bytes->bytes/encoding encoding bstr)
       (let*-values ([(conv) (bytes-open-converter encoding "UTF-8")]
                     [(result len status) (bytes-convert conv bstr)])
         (bytes-close-converter conv)
         (unless (eq? status 'complete)
-          (set! conv (bytes-open-converter default-encoding "UTF-8"))
+          (set! conv (bytes-open-converter default-locale-encoding "UTF-8"))
           (set!-values (result len status) (bytes-convert conv bstr))
           (bytes-close-converter conv))
         result))
@@ -292,9 +269,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (print-crlf/encoding encoding (if (null? args) response (apply format response args)) out)))))
 
 (define ftp-DTP%
-  (class (ftp-encoding% (ftp-utils% object%))
+  (mixin () ()
+    (super-new)
     
-    (init-field server-params
+    (init-field server-host
                 [pasv-listener #f]
                 [ssl-server-context #f]
                 [ssl-client-context #f]
@@ -312,8 +290,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [print-ascii (λ(data out) #f)]
                 [log-store-event (λ(new-file-full-path exists-mode) #f)]
                 [log-copy-event (λ(file-full-path) #f)])
-    
-    (super-new [default-encoding default-locale-encoding])
     
     (define/public (net-accept tcp-listener)
       (let-values ([(in out) (tcp-accept tcp-listener)])
@@ -474,16 +450,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (print-close)))
                       #:mode 'binary
                       #:exists exists-mode))
-                  (custodian-shutdown-all current-process)))))
-    
-    (define-syntax (server-host stx)
-      #'(ftp-server-params-server-host server-params))
-    
-    (define-syntax (default-locale-encoding stx)
-      #'(ftp-server-params-default-locale-encoding server-params))))
+                  (custodian-shutdown-all current-process)))))))
 
 (define ftp-session%
-  (class ftp-DTP%
+  (class (ftp-DTP% (ftp-encoding% (ftp-utils% object%)))
     (inherit get-params
              print/encoding
              print-crlf/encoding
@@ -495,9 +465,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              ftp-data-transfer
              ftp-store-file)
     
-    (inherit-field server-params
+    (inherit-field server-host
                    ssl-server-context
                    ssl-client-context
+                   default-locale-encoding
                    current-process
                    active-host&port
                    passive-host&port
@@ -511,8 +482,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Public Definitions ----------
     ;;
     (init-field welcome-message
+                pasv-host&ports
                 users&groups
                 random-gen
+                server-responses
+                default-root-dir
+                bad-auth-sleep-sec
+                max-auth-attempts
+                bad-auth-table
+                pass-sleep-sec
+                allow-foreign-address
+                log-output-port
                 [disable-commands null])
     ;;
     ;; ---------- Superclass Initialization ----------
@@ -1575,50 +1555,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (print-crlf/encoding** 'END 214))))
     
     
-    (define-syntax (bad-auth-table stx)
-      #'(ftp-server-params-bad-auth server-params))
-    
-    (define-syntax (server-host stx)
-      #'(ftp-server-params-server-host server-params))
-    
     (define-syntax (passive-host stx)
-      #'(passive-host&ports-host (ftp-server-params-pasv-host&ports server-params)))
+      #'(passive-host&ports-host pasv-host&ports))
     
     (define-syntax (passive-ports-from stx)
-      #'(passive-host&ports-from (ftp-server-params-pasv-host&ports server-params)))
+      #'(passive-host&ports-from pasv-host&ports))
     
     (define-syntax (passive-ports-to stx)
-      #'(passive-host&ports-to (ftp-server-params-pasv-host&ports server-params)))
-    
-    (define-syntax (default-root-dir stx)
-      #'(ftp-server-params-default-root-dir server-params))
-    
-    (define-syntax (default-locale-encoding stx)
-      #'(ftp-server-params-default-locale-encoding server-params))
+      #'(passive-host&ports-to pasv-host&ports))
     
     (define-syntax (ftp-groups stx)
       #'(ftp-server-params-ftp-groups server-params))
     
-    (define-syntax (log-output-port stx)
-      #'(ftp-server-params-log-output-port server-params))
-    
-    (define-syntax (server-responses stx)
-      #'(ftp-server-params-server-responses server-params))
-    
     (define-syntax (kill-current-ftp-process stx)
       #'(custodian-shutdown-all current-process))
-    
-    (define-syntax (bad-auth-sleep-sec stx)
-      #'(ftp-server-params-bad-auth-sleep server-params))
-    
-    (define-syntax (max-auth-attempts stx)
-      #'(ftp-server-params-max-auth-attempts server-params))
-    
-    (define-syntax (pass-sleep-sec stx)
-      #'(ftp-server-params-pass-sleep server-params))
-    
-    (define-syntax (allow-foreign-address stx)
-      #'(ftp-server-params-allow-foreign-address server-params))
     
     (define-syntax-rule (print-crlf/encoding* txt)
       (print-crlf/encoding *locale-encoding* txt *client-output-port*))
@@ -1890,7 +1840,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Private Definitions ----------
     ;;
-    (define server-params #f)
     (define users&groups (make-users&groups))
     (define state 'stopped)
     (define server-custodian #f)
@@ -1918,24 +1867,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (when (eq? state 'stopped)
         (set! server-custodian (make-custodian))
         (parameterize ([current-custodian server-custodian])
-          (set! server-params (ftp-server-params pasv-host&ports
-                                                 server-host
-                                                 default-server-responses
-                                                 (if (path? default-root-dir)
-                                                     (path->string default-root-dir)
-                                                     default-root-dir)
-                                                 default-locale-encoding
-                                                 (if log-file
-                                                     (begin
-                                                       (unless (file-exists? log-file)
-                                                         (make-directory* (path-only log-file)))
-                                                       (open-output-file log-file #:exists 'append))
-                                                     (current-output-port))
-                                                 (make-hash) ;bad-auth
-                                                 bad-auth-sleep-sec
-                                                 max-auth-attempts
-                                                 pass-sleep-sec
-                                                 allow-foreign-address))
           (unless (ftp-dir-exists? default-root-dir)
             (ftp-mkdir default-root-dir))
           (when (and server-host server-port)
@@ -1954,13 +1885,30 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    [tcp-listener (tcp-listen server-port max-allow-wait #t server-host)])
               (letrec ([main-loop (λ ()
                                     (send (new ftp-session%
-                                               [server-params server-params]
-                                               [users&groups users&groups]
+                                               [welcome-message welcome-message]
+                                               [server-host server-host]
+                                               [pasv-host&ports pasv-host&ports]
                                                [ssl-server-context ssl-server-ctx]
                                                [ssl-client-context ssl-client-ctx]
-                                               [disable-commands disable-ftp-commands]
+                                               [users&groups users&groups]
                                                [random-gen random-gen]
-                                               [welcome-message welcome-message])
+                                               [server-responses default-server-responses]
+                                               [default-locale-encoding default-locale-encoding]
+                                               [default-root-dir (if (path? default-root-dir)
+                                                                     (path->string default-root-dir)
+                                                                     default-root-dir)]
+                                               [bad-auth-sleep-sec bad-auth-sleep-sec]
+                                               [max-auth-attempts max-auth-attempts]
+                                               [bad-auth-table (make-hash)]
+                                               [pass-sleep-sec pass-sleep-sec]
+                                               [allow-foreign-address allow-foreign-address]
+                                               [log-output-port (if log-file
+                                                                    (begin
+                                                                      (unless (file-exists? log-file)
+                                                                        (make-directory* (path-only log-file)))
+                                                                      (open-output-file log-file #:exists 'append))
+                                                                    (current-output-port))]
+                                               [disable-commands disable-ftp-commands])
                                           handle-client-request tcp-listener transfer-wait-time)
                                     (main-loop))])
                 (set! server-thread (thread main-loop))))))
