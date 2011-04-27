@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Library v1.0.1
+ProRFTPd Library v1.0.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -61,6 +61,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    (RU . "501 ~a Синтаксическая ошибка (неверный параметр или аргумент)."))
      (CMD-NOT-IMPLEMENTED (EN . "502 ~a not implemented.")
                           (RU . "502 Команда ~a не реализована."))
+     (INVALID-CMD-SYNTAX (EN . "500 Invalid command syntax.")
+			 (RU . "500 Неверный синтаксис команды."))
      (PLEASE-LOGIN (EN . "530 Please login with USER and PASS.")
                    (RU . "530 Пожалуйста авторизируйтесь используя USER и PASS."))
      (ANONYMOUS-LOGIN (EN . "331 Anonymous login ok, send your complete email address as your password.")
@@ -520,7 +522,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Private Definitions ----------
     ;;
-    (struct ftp-mlst-features (type? size? modify? perm? 
+    (struct ftp-mlst-features (type? size? modify? perm? unique? charset?
                                      unix-mode? unix-owner? unix-group?) #:mutable)
     
     (define *client-host* #f)
@@ -534,7 +536,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define *root-dir* default-root-dir)
     (define *current-dir* "/")
     (define *rename-path* #f)
-    (define *mlst-features* (ftp-mlst-features #t #t #t #t #t #t #t))
+    (define *mlst-features* (ftp-mlst-features #t #t #t #t #t #t #t #t #t))
     (define *lang-list* (let ([r (hash-ref server-responses 'SYNTAX-ERROR)])
                           (map car r)))
     (define *current-lang* (car *lang-list*))
@@ -577,28 +579,26 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (accept-client-request [reset-timer void])
       (with-handlers ([any/c debug/handler])
         (do ([p (regexp-split #rx"\n|\r" welcome-message) (cdr p)])
-          [(null? (cdr p))
-           (printf-crlf/encoding *locale-encoding* *client-output-port* "220 ~a" (car p))]
+	    [(null? (cdr p))
+	     (printf-crlf/encoding *locale-encoding* *client-output-port* "220 ~a" (car p))]
           (printf-crlf/encoding *locale-encoding* *client-output-port* "220-~a" (car p)))
         (let loop ([request (read-request *locale-encoding* *client-input-port*)])
-          (unless (eof-object? request)
-            (when request
-              (let ([cmd (string-upcase (car (regexp-match #rx"[^ ]+" request)))]
-                    [params (get-params request)])
-                (if *userstruct*
-                    (let ([rec (hash-ref *cmd-voc* cmd #f)])
-                      (if rec
-                          (with-handlers ([any/c (λ(e) (print-crlf/encoding** 'UNKNOWN-ERROR))])
-                            ((car rec) params))
-                          (print-crlf/encoding** 'CMD-NOT-IMPLEMENTED cmd)))
-                    (case (string->symbol cmd)
-                      ((USER) (USER-COMMAND params))
-                      ((PASS) (PASS-COMMAND params))
-                      ((QUIT) (QUIT-COMMAND params))
-                      (else (print-crlf/encoding** 'PLEASE-LOGIN))))))
-            (reset-timer)
-            (sleep .005)
-            (loop (read-request *locale-encoding* *client-input-port*))))))
+          (when (and request (string? request))
+	    (if (regexp-match #rx"[^ \t]+" request)
+		(let* ([cmd (string-upcase (car (regexp-match #rx"[^ \t]+" request)))]
+		       [cmdinfo (hash-ref *cmd-voc* cmd #f)])
+		  (if cmdinfo
+		      (with-handlers ([any/c (λ(e) 
+					       (when-drdebug (displayln e))
+					       (print-crlf/encoding** 'UNKNOWN-ERROR))])
+			(if (or *userstruct* (car cmdinfo))
+			    ((cadr cmdinfo) (get-params request))
+			    (print-crlf/encoding** 'PLEASE-LOGIN)))
+		      (print-crlf/encoding** 'CMD-NOT-IMPLEMENTED cmd)))
+		(print-crlf/encoding** 'INVALID-CMD-SYNTAX)))
+	  (reset-timer)
+	  (sleep .005)
+	  (loop (read-request *locale-encoding* *client-input-port*)))))
     
     (define (USER-COMMAND params)
       (if params
@@ -755,11 +755,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (print-crlf/encoding* " REST STREAM"))
             (and (hash-ref *cmd-voc* "MLST" #f)
                  (print-crlf/encoding* 
-                  (format " MLST Type~a;Size~a;Modify~a;Perm~a;UNIX.mode~a;UNIX.owner~a;UNIX.group~a;"
+                  (format " MLST Type~a;Size~a;Modify~a;Perm~a;Unique~a;Charset~a;UNIX.mode~a;UNIX.owner~a;UNIX.group~a;"
                           (if (ftp-mlst-features-type? *mlst-features*) "*" "")
                           (if (ftp-mlst-features-size? *mlst-features*) "*" "")
                           (if (ftp-mlst-features-modify? *mlst-features*) "*" "")
                           (if (ftp-mlst-features-perm? *mlst-features*) "*" "")
+			  (if (ftp-mlst-features-unique? *mlst-features*) "*" "")
+			  (if (ftp-mlst-features-charset? *mlst-features*) "*" "")
                           (if (ftp-mlst-features-unix-mode? *mlst-features*) "*" "")
                           (if (ftp-mlst-features-unix-owner? *mlst-features*) "*" "")
                           (if (ftp-mlst-features-unix-group? *mlst-features*) "*" ""))))
@@ -921,7 +923,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (let ([mlst (map string->symbol
                                       (filter (λ (s) (not (string=? s "")))
                                               (regexp-split #rx"[; \t]+" (string-upcase (car modes)))))])
-                       (if (andmap (λ (mode) (member mode '(TYPE SIZE MODIFY PERM UNIX.MODE UNIX.OWNER UNIX.GROUP)))
+                       (if (andmap (λ (mode) (member mode '(TYPE SIZE MODIFY PERM UNIQUE CHARSET 
+								 UNIX.MODE UNIX.OWNER UNIX.GROUP)))
                                    mlst)
                            (begin
                              (set! *mlst-features* (ftp-mlst-features #f #f #f))
@@ -931,6 +934,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                            [(SIZE) (set-ftp-mlst-features-size?! *mlst-features* #t)]
                                            [(MODIFY) (set-ftp-mlst-features-modify?! *mlst-features* #t)]
                                            [(PERM) (set-ftp-mlst-features-perm?! *mlst-features* #t)]
+					   [(UNIQUE) (set-ftp-mlst-features-unique?! *mlst-features* #t)]
+					   [(CHARSET) (set-ftp-mlst-features-charset?! *mlst-features* #t)]
                                            [(UNIX.MODE) (set-ftp-mlst-features-unix-mode?! *mlst-features* #t)]
                                            [(UNIX.OWNER) (set-ftp-mlst-features-unix-owner?! *mlst-features* #t)]
                                            [(UNIX.GROUP) (set-ftp-mlst-features-unix-group?! *mlst-features* #t)]))
@@ -1001,7 +1006,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (HELP-COMMAND params)
       (if params
           (with-handlers ([any/c (λ (e) (print-crlf/encoding** 'UNKNOWN-CMD params))])
-            (print-crlf/encoding** 'HELP (cdr (hash-ref *cmd-voc* (string-upcase params)))))
+            (print-crlf/encoding** 'HELP (cddr (hash-ref *cmd-voc* (string-upcase params)))))
           (begin
             (print-crlf/encoding** 'HELP-LISTING)
             (for-each (λ (rec) (print-crlf/encoding* (format " ~a" (car rec)))) *cmd-list*)
@@ -1042,7 +1047,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   [mode (Stat-mode stat)]
                   [owner (uid->login (Stat-uid stat))]
                   [group (gid->gname (Stat-gid stat))])
-             (format "~a~a~a~a ~2F ~8F ~8F ~14F ~a ~a\n" 
+             (format "~a~a~a~a ~3F ~8F ~8F ~14F ~a" 
                      (cond
                        [(bitwise-bit-set? mode 15)
                         (cond
@@ -1073,8 +1078,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (or owner (Stat-uid stat))
                      (or group (Stat-gid stat))
                      (Stat-size stat)
-                     (date-time->string (seconds->date (Stat-mtime stat)))
-                     ftp-path)))
+                     (date-time->string (seconds->date (Stat-mtime stat))))))
          
          (define (dlst ftp-dir)
            (if (ftp-dir-execute-ok? ftp-dir)
@@ -1082,6 +1086,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       [dirlist 
                        (if (ftp-dir-list-ok? ftp-dir)
                            (string-append*
+			    (if short?
+				".\n"
+				(string-append (read-stat ftp-dir) " .\n"))
+			    (if short?
+				"..\n"
+				(string-append (if (= (file-or-directory-identity full-dir)
+						      (file-or-directory-identity *root-dir*))
+						   (read-stat ftp-dir)
+						   (read-stat (simplify-ftp-path ftp-dir 1)))
+					       " ..\n"))
                             (map (λ (p)
                                    (let* ([spath (path->string p)]
                                           [ftp-spath (string-append ftp-dir "/" spath)]
@@ -1090,7 +1104,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                              (ftp-dir-execute-ok? ftp-spath))
                                          (if short?
                                              (string-append spath "\n")
-                                             (read-stat ftp-spath))
+                                             (string-append (read-stat ftp-spath) " " spath "\n"))
                                          "")))
                                  (directory-list full-dir)))
                            "")])
@@ -1139,6 +1153,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            [dirlist 
                             (if (ftp-dir-list-ok? ftp-path)
                                 (string-append*
+				 (string-append (mlst-info ftp-path #f ".") "\n")
+				 (string-append (if (= (file-or-directory-identity path)
+						       (file-or-directory-identity *root-dir*))
+						    (mlst-info ftp-path #f "..")
+						    (mlst-info (string-append ftp-path "/..") #f ".."))
+						"\n")
                                  (map (λ (p)
                                         (let* ([spath (path->string p)]
                                                [ftp-spath (string-append ftp-path "/" spath)]
@@ -1540,13 +1560,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (if (< (date-second dte) 10) "0" "")
                 (date-second dte))))
     
-    (define (mlst-info ftp-path [full-path? #t])
+    (define (mlst-info ftp-path [full-path? #t][out-name #f])
       (let* ([ftp-path (simplify-ftp-path ftp-path)]
              [path (string-append *root-dir* ftp-path)]
              [parent-path (and (not (string=? "/" ftp-path))
                                (string-append *root-dir* (simplify-ftp-path ftp-path 1)))]
              [parent-stat (and parent-path (ftp-stat parent-path))]
-             [name (path->string (file-name-from-path ftp-path))]
+             [name (if (string=? "/" ftp-path) "/" (path->string (file-name-from-path ftp-path)))]
              [stat (ftp-stat path)]
              [mode (Stat-mode stat)]
              [owner (uid->login (Stat-uid stat))]
@@ -1558,7 +1578,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              [gid (ftp-user-gid user)]
              [features *mlst-features*])
         (string-append (if (ftp-mlst-features-type? features)
-                           (format "Type=~a;" (if file? "file" "dir"))
+                           (format "Type=~a;"
+				   (cond
+				    [(bitwise-bit-set? mode 15)
+				     (cond
+				      [(bitwise-bit-set? mode 13) "OS.unix=slink"]
+				      [(bitwise-bit-set? mode 14) "OS.unix=socket"]
+				      [else "file"])]
+				    [(bitwise-bit-set? mode 14)
+				     (if (bitwise-bit-set? mode 13)
+					 "OS.unix=blkdev"
+					 (if out-name
+					     (cond 
+					      [(string=? out-name ".") "cdir"]
+					      [(string=? out-name "..") "pdir"]
+					      [else "dir"])
+					     "dir"))]
+				    [(bitwise-bit-set? mode 13) "OS.unix=chrdev"]
+				    [(bitwise-bit-set? mode 12) "OS.unix=pipe"]
+				    [else "file"]))
                            "")
                        (if (and file? (ftp-mlst-features-size? features))
                            (format "Size=~d;" (Stat-size stat))
@@ -1621,8 +1659,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                    "d" ""))
                                               "")))))
                            "")
+                       (if (ftp-mlst-features-unique? features)
+                           (format "Unique=~x+~x;" (Stat-dev stat) (Stat-ino stat))
+                           "")
+                       (if (ftp-mlst-features-charset? features)
+                           (format "Charset=~a;" *locale-encoding*)
+                           "")
                        (if (ftp-mlst-features-unix-mode? features)
-                           (format "UNIX.mode=~o;" (bitwise-bit-field (Stat-mode stat) 0 12))
+                           (format "UNIX.mode=~o;" (bitwise-and (Stat-mode stat) #o7777))
                            "")
                        (if (ftp-mlst-features-unix-owner? features)
                            (format "UNIX.owner=~a;" (or owner (Stat-uid stat)))
@@ -1631,61 +1675,61 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            (format "UNIX.group=~a;" (or group (Stat-gid stat)))
                            "")
                        " "
-                       (if full-path? ftp-path name))))
+                       (or out-name (if full-path? ftp-path name)))))
     
     (define (init)
       (set! *cmd-list*
             (remove*
-             (map symbol->string disable-commands)
-             `(("ABOR" ,ABOR-COMMAND . "ABOR")
-               ("ALLO" ,ALLO-COMMAND . "ALLO <SP> <decimal-integer>")
-               ("APPE" ,APPE-COMMAND . "APPE <SP> <pathname>")
-               ("CDUP" ,CDUP-COMMAND . "CDUP")
-               ("CLNT" ,CLNT-COMMAND . "CLNT <SP> <client-name>")
-               ("CWD"  ,CWD-COMMAND . "CWD <SP> <pathname>")
-               ("DELE" ,DELE-COMMAND . "DELE <SP> <pathname>")
-               ("EPRT" ,EPRT-COMMAND . "EPRT <SP> <d> <address-family> <d> <ip-addr> <d> <port> <d>")
-               ("EPSV" ,EPSV-COMMAND . "EPSV [<SP> (<address-family> | ALL)]")
-               ("FEAT" ,FEAT-COMMAND . "FEAT")
-               ("HELP" ,HELP-COMMAND . "HELP [<SP> <string>]")
-               ("LANG" ,LANG-COMMAND . "LANG <SP> <lang-tag>")
-               ("LIST" ,(λ (params) (DIR-LIST params)) . "LIST [<SP> <pathname>]")
-               ("MDTM" ,MDTM-COMMAND . "MDTM <SP> <pathname>")
-               ("MKD"  ,MKD-COMMAND . "MKD <SP> <pathname>")
-               ("MLSD" ,MLSD-COMMAND . "MLSD [<SP> <pathname>]")
-               ("MLST" ,MLST-COMMAND . "MLST [<SP> <pathname>]")
-               ("MODE" ,MODE-COMMAND . "MODE <SP> <mode-code>")
-               ("NLST" ,(λ (params) (DIR-LIST params #t)) . "NLST [<SP> <pathname>]")
-               ("NOOP" ,NOOP-COMMAND . "NOOP")
-               ("OPTS" ,OPTS-COMMAND . "OPTS <SP> <command-name> [<SP> <command-options>]")
-               ("PASS" ,PASS-COMMAND . "PASS <SP> <password>")
-               ("PASV" ,PASV-COMMAND . "PASV")
-               ("PBSZ" ,PBSZ-COMMAND . "PBSZ <SP> <num>") ; error!
-               ("PORT" ,PORT-COMMAND . "PORT <SP> <host-port>")
-               ("PROT" ,PROT-COMMAND . "PROT <SP> <code>") ; error!
-               ("PWD"  ,PWD-COMMAND . "PWD")
-               ("QUIT" ,QUIT-COMMAND . "QUIT")
-               ("REIN" ,REIN-COMMAND . "REIN")
-               ("REST" ,REST-COMMAND . "REST <SP> <marker>")
-               ("RETR" ,RETR-COMMAND . "RETR <SP> <pathname>")
-               ("RMD"  ,RMD-COMMAND . "RMD <SP> <pathname>")
-               ("RNFR" ,RNFR-COMMAND . "RNFR <SP> <pathname>")
-               ("RNTO" ,RNTO-COMMAND . "RNTO <SP> <pathname>")
-               ("SITE" ,SITE-COMMAND . "SITE <SP> <string>")
-               ("SIZE" ,SIZE-COMMAND . "SIZE <SP> <pathname>")
-               ("STAT" ,STAT-COMMAND . "STAT [<SP> <pathname>]")
-               ("STOR" ,STOR-COMMAND . "STOR <SP> <pathname>")
-               ("STOU" ,STOU-COMMAND . "STOU")
-               ("STRU" ,STRU-COMMAND . "STRU <SP> <structure-code>")
-               ("SYST" ,SYST-COMMAND . "SYST")
-               ("TYPE" ,TYPE-COMMAND . "TYPE <SP> <type-code>")
-               ("USER" ,USER-COMMAND . "USER <SP> <username>")
-               ("XCUP" ,CDUP-COMMAND . "XCUP")
-               ("XCWD" ,CWD-COMMAND . "XCWD <SP> <pathname>")
-               ("XMKD" ,MKD-COMMAND . "XMKD <SP> <pathname>")
-               ("XPWD" ,PWD-COMMAND . "XPWD")
-               ("XRMD" ,RMD-COMMAND . "XRMD <SP> <pathname>"))
-             string-ci=?))
+             (map (compose string-upcase symbol->string) disable-commands)
+             `(("ABOR" #f ,ABOR-COMMAND . "ABOR")
+               ("ALLO" #f ,ALLO-COMMAND . "ALLO <SP> <decimal-integer>")
+               ("APPE" #f ,APPE-COMMAND . "APPE <SP> <pathname>")
+               ("CDUP" #f ,CDUP-COMMAND . "CDUP")
+               ("CLNT" #f ,CLNT-COMMAND . "CLNT <SP> <client-name>")
+               ("CWD"  #f ,CWD-COMMAND . "CWD <SP> <pathname>")
+               ("DELE" #f ,DELE-COMMAND . "DELE <SP> <pathname>")
+               ("EPRT" #f ,EPRT-COMMAND . "EPRT <SP> <d> <address-family> <d> <ip-addr> <d> <port> <d>")
+               ("EPSV" #f ,EPSV-COMMAND . "EPSV [<SP> (<address-family> | ALL)]")
+               ("FEAT" #t ,FEAT-COMMAND . "FEAT")
+               ("HELP" #t ,HELP-COMMAND . "HELP [<SP> <string>]")
+               ("LANG" #t ,LANG-COMMAND . "LANG <SP> <lang-tag>")
+               ("LIST" #f ,(λ (params) (DIR-LIST params)) . "LIST [<SP> <pathname>]")
+               ("MDTM" #f ,MDTM-COMMAND . "MDTM <SP> <pathname>")
+               ("MKD"  #f ,MKD-COMMAND . "MKD <SP> <pathname>")
+               ("MLSD" #f ,MLSD-COMMAND . "MLSD [<SP> <pathname>]")
+               ("MLST" #f ,MLST-COMMAND . "MLST [<SP> <pathname>]")
+               ("MODE" #f ,MODE-COMMAND . "MODE <SP> <mode-code>")
+               ("NLST" #f ,(λ (params) (DIR-LIST params #t)) . "NLST [<SP> <pathname>]")
+               ("NOOP" #t ,NOOP-COMMAND . "NOOP")
+               ("OPTS" #f ,OPTS-COMMAND . "OPTS <SP> <command-name> [<SP> <command-options>]")
+               ("PASS" #t ,PASS-COMMAND . "PASS <SP> <password>")
+               ("PASV" #f ,PASV-COMMAND . "PASV")
+               ("PBSZ" #f ,PBSZ-COMMAND . "PBSZ <SP> <num>") ; error!
+               ("PORT" #f ,PORT-COMMAND . "PORT <SP> <host-port>")
+               ("PROT" #f ,PROT-COMMAND . "PROT <SP> <code>") ; error!
+               ("PWD"  #f ,PWD-COMMAND . "PWD")
+               ("QUIT" #t ,QUIT-COMMAND . "QUIT")
+               ("REIN" #f ,REIN-COMMAND . "REIN")
+               ("REST" #f ,REST-COMMAND . "REST <SP> <marker>")
+               ("RETR" #f ,RETR-COMMAND . "RETR <SP> <pathname>")
+               ("RMD"  #f ,RMD-COMMAND . "RMD <SP> <pathname>")
+               ("RNFR" #f ,RNFR-COMMAND . "RNFR <SP> <pathname>")
+               ("RNTO" #f ,RNTO-COMMAND . "RNTO <SP> <pathname>")
+               ("SITE" #f ,SITE-COMMAND . "SITE <SP> <string>")
+               ("SIZE" #f ,SIZE-COMMAND . "SIZE <SP> <pathname>")
+               ("STAT" #f ,STAT-COMMAND . "STAT [<SP> <pathname>]")
+               ("STOR" #f ,STOR-COMMAND . "STOR <SP> <pathname>")
+               ("STOU" #f ,STOU-COMMAND . "STOU")
+               ("STRU" #f ,STRU-COMMAND . "STRU <SP> <structure-code>")
+               ("SYST" #t ,SYST-COMMAND . "SYST")
+               ("TYPE" #f ,TYPE-COMMAND . "TYPE <SP> <type-code>")
+               ("USER" #t ,USER-COMMAND . "USER <SP> <username>")
+               ("XCUP" #f ,CDUP-COMMAND . "XCUP")
+               ("XCWD" #f ,CWD-COMMAND . "XCWD <SP> <pathname>")
+               ("XMKD" #f ,MKD-COMMAND . "XMKD <SP> <pathname>")
+               ("XPWD" #f ,PWD-COMMAND . "XPWD")
+               ("XRMD" #f ,RMD-COMMAND . "XRMD <SP> <pathname>"))
+             (λ (a b) (string-ci=? a (car b)))))
       (set! *cmd-voc* (make-hash *cmd-list*)))
     
     (init)))
