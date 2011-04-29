@@ -47,20 +47,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
        (loop (add1 i))])))
 
 (define (delete-lws str [ws '(#\space #\tab)])
-  (do [(i 0 (add1 i))]
-    [(not (memq (string-ref str i) ws))
-     (substring str i)]))
+  (do [(len (string-length str))
+       (i 0 (add1 i))]
+      [(or (>= i len) (not (memq (string-ref str i) ws)))
+       (substring str i)]))
 
-(define (delete-rws str [ws '(#\space #\tab)]);error!
-  (do [(i (string-length str) (sub1 i))]
-    [(not (memq (string-ref str (sub1 i)) ws))
-     (substring str 0 i)]))
+(define (delete-rws str [ws '(#\space #\tab)])
+  (let ([len (string-length str)])
+    (do [(i len (sub1 i))]
+	[(or (<= i 0) (not (memq (string-ref str (sub1 i)) ws)))
+	 (substring str 0 i)])))
 
 (define (delete-lrws str [ws '(#\space #\tab)])
   (let ([start 0]
         [end (string-length str)])
-    (do [] [(not (memq (string-ref str start) ws))]
+    (do [] [(or (>= start end) (not (memq (string-ref str start) ws)))]
       (set! start (add1 start)))
-    (do [] [(not (memq (string-ref str (sub1 end)) ws))]
+    (do [] [(or (<= end start) (not (memq (string-ref str (sub1 end)) ws)))]
       (set! end (sub1 end)))
     (substring str start end)))
