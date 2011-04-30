@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Library v1.0.4
+ProRFTPd Library v1.0.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -56,12 +56,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (make-hash
    '((SYNTAX-ERROR (EN . "501 ~a Syntax error in parameters or arguments.")
                    (RU . "501 ~a Синтаксическая ошибка (неверный параметр или аргумент)."))
+     (MAX-CLIENTS-PER-IP (EN . "530 You have exceeded the limit on connections, please try again later.")
+                         (RU . "530 Вы превысили лимит подключений, пожалуйста, повторите попытку позже."))
+     (TRANSFER-WAIT-TIME (EN . "421 Closing control connection due to inactivity from the client.")
+                         (RU . "421 Управляющее соединение закрывается из-за отсутствия активности со стороны клиента."))
      (CMD-NOT-IMPLEMENTED (EN . "502 ~a not implemented.")
                           (RU . "502 Команда ~a не реализована."))
      (INVALID-CMD-SYNTAX (EN . "500 Invalid command syntax.")
                          (RU . "500 Неверный синтаксис команды."))
      (PLEASE-LOGIN (EN . "530 Please login with USER and PASS.")
-                   (RU . "530 Пожалуйста авторизируйтесь используя USER и PASS."))
+                   (RU . "530 Пожалуйста, авторизируйтесь используя USER и PASS."))
      (ANONYMOUS-LOGIN (EN . "331 Anonymous login ok, send your complete email address as your password.")
                       (RU . "331 Анонимный логин корректен, в качестве пароля используйте Ваш email."))
      (PASSW-REQUIRED (EN . "331 Password required for ~a")
@@ -253,12 +257,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (write-bytes (string->bytes/encoding encoding str) out))
     
     (define/public (read-request encoding input-port)
-      (and (byte-ready? input-port)
-           (let ([line (read-bytes-line input-port)])
-             (if (eof-object? line)
-                 line
-                 (let ([s (bytes->string/encoding encoding line)])
-                   (substring s 0 (sub1 (string-length s))))))))
+      (let ([line (read-bytes-line input-port)])
+        (if (eof-object? line)
+            line
+            (let ([s (bytes->string/encoding encoding line)])
+              (substring s 0 (sub1 (string-length s)))))))
     
     (define/public (print-crlf/encoding encoding str out)
       (print/encoding encoding str out)
@@ -330,14 +333,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                        (ports->ssl-ports in out 
                                                          #:mode 'connect
                                                          #:context ssl-client-context)))
-                        (let-values ([(reset-alarm kill-alarm)
+                        (let-values ([(start-timer pause-timer reset-timer kill-timer)
                                       (alarm-clock 1 15
                                                    (λ() (custodian-shutdown-all current-process)))])
+                          (start-timer)
                           (if file?
                               (call-with-input-file data
                                 (λ (in)
                                   (let loop ([dat (read-bytes 1048576 in)])
-                                    (reset-alarm)
+                                    (reset-timer)
                                     (unless (eof-object? dat)
                                       (write-bytes dat out)
                                       (loop (read-bytes 1048576 in))))))
@@ -346,7 +350,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                  (print-ascii data out))
                                 ((Image)
                                  (write-bytes data out))))
-                          (kill-alarm))
+                          (kill-timer))
                         (flush-output out)
                         (when file? (log-copy-event data))
                         ;(close-input-port in);ssl required
@@ -360,14 +364,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (with-handlers ([any/c (λ (e) (print-abort))])
                     (let-values ([(in out) (net-accept pasv-listener)])
                       (print-connect)
-                      (let-values ([(reset-alarm kill-alarm)
+                      (let-values ([(start-timer pause-timer reset-timer kill-timer)
                                     (alarm-clock 1 15
                                                  (λ() (custodian-shutdown-all current-process)))])
+                        (start-timer)
                         (if file?
                             (call-with-input-file data
                               (λ (in)
                                 (let loop ([dat (read-bytes 1048576 in)])
-                                  (reset-alarm)
+                                  (reset-timer)
                                   (unless (eof-object? dat)
                                     (write-bytes dat out)
                                     (loop (read-bytes 1048576 in))))))
@@ -376,7 +381,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                (print-ascii data out))
                               ((Image)
                                (write-bytes data out))))
-                        (kill-alarm))
+                        (kill-timer))
                       ;(flush-output out)
                       (close-output-port out);ssl required
                       (when file? (log-copy-event data))
@@ -413,15 +418,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (when restart-marker
                                 (file-position fout restart-marker)
                                 (set! restart-marker #f))
-                              (let-values ([(reset-alarm kill-alarm)
+                              (let-values ([(start-timer pause-timer reset-timer kill-timer)
                                             (alarm-clock 1 15
                                                          (λ() (custodian-shutdown-all current-process)))])
+                                (start-timer)
                                 (let loop ([dat (read-bytes 1048576 in)])
-                                  (reset-alarm)
+                                  (reset-timer)
                                   (unless (eof-object? dat)
                                     (write-bytes dat fout)
                                     (loop (read-bytes 1048576 in))))
-                                (kill-alarm))
+                                (kill-timer))
                               (flush-output fout)
                               (log-store-event new-file-full-path exists-mode)
                               (print-close)))
@@ -444,15 +450,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             (when restart-marker
                               (file-position fout restart-marker)
                               (set! restart-marker #f))
-                            (let-values ([(reset-alarm kill-alarm)
+                            (let-values ([(start-timer pause-timer reset-timer kill-timer)
                                           (alarm-clock 1 15
                                                        (λ() (custodian-shutdown-all current-process)))])
+                              (start-timer)
                               (let loop ([dat (read-bytes 1048576 in)])
-                                (reset-alarm)
+                                (reset-timer)
                                 (unless (eof-object? dat)
                                   (write-bytes dat fout)
                                   (loop (read-bytes 1048576 in))))
-                              (kill-alarm))
+                              (kill-timer))
                             (flush-output fout)
                             (log-store-event new-file-full-path exists-mode)
                             (print-close)))
@@ -492,6 +499,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (init-field welcome-message
                 pasv-host&ports
                 users-table
+                clients-table
                 random-gen
                 server-responses
                 default-root-dir
@@ -547,61 +555,80 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (handle-client-request tcp-listener transfer-wait-time)
+    (define/public (handle-client-request tcp-listener transfer-wait-time max-clients-per-ip)
       (let ([cust (make-custodian)])
         (with-handlers ([any/c (λ (e)
                                  ;(displayln e) 
                                  (custodian-shutdown-all cust))])
           (parameterize ([current-custodian cust])
-            (set!-values (*client-input-port* *client-output-port*) (net-accept tcp-listener))
-            (let-values ([(server-host client-host) (net-addresses *client-input-port*)])
-              (set! *client-host* client-host)
-              (set! *current-protocol* (if (IPv4? server-host) '|1| '|2|))
-              (thread (λ ()
-                        (call/cc
-                         (λ (quit)
-                           (set! *quit* quit)
-                           (accept-client-request (connect-shutdown transfer-wait-time cust))))
-                        (kill-current-ftp-process)
-                        (custodian-shutdown-all cust))))))))
+            (let next-accept ()
+              (set!-values (*client-input-port* *client-output-port*) (net-accept tcp-listener))
+              (let-values ([(server-host client-host) (net-addresses *client-input-port*)]
+                           [(allow?) #t])
+                (if (hash-ref clients-table client-host #f)
+                    (if (< (hash-ref clients-table client-host) max-clients-per-ip)
+                        (hash-set! clients-table client-host (add1 (hash-ref clients-table client-host)))
+                        (set! allow? #f))
+                    (hash-set! clients-table client-host 1))
+                (if allow?
+                    (begin
+                      (set! *client-host* client-host)
+                      (set! *current-protocol* (if (IPv4? server-host) '|1| '|2|))
+                      (thread (λ ()
+                                (call/cc
+                                 (λ (quit)
+                                   (set! *quit* quit)
+                                   (accept-client-request transfer-wait-time)))
+                                (when (hash-ref clients-table client-host #f)
+                                  (if (<= (hash-ref clients-table client-host) 1)
+                                      (hash-remove! clients-table client-host)
+                                      (hash-set! clients-table client-host (sub1 (hash-ref clients-table client-host)))))
+                                (kill-current-ftp-process)
+                                (close-output-port *client-output-port*);ssl required
+                                (custodian-shutdown-all cust))))
+                    (begin
+                      (print-crlf/encoding** 'MAX-CLIENTS-PER-IP)
+                      (close-output-port *client-output-port*);ssl required
+                      (close-input-port *client-input-port*)
+                      (next-accept)))))))))
     ;;
     ;; ---------- Private Methods ----------
     ;;
-    (define (connect-shutdown time connect-cust)
-      (let-values ([(reset kill)
-                    (alarm-clock 1 time
-                                 (λ()
-                                   ;421 No-transfer-time exceeded. Closing control connection.
-                                   (custodian-shutdown-all connect-cust)))])
-        reset))
-    
-    (define (accept-client-request [reset-timer void])
+    (define (accept-client-request no-transfer-time)
       (with-handlers ([any/c debug/handler])
-        (do ([p (regexp-split #rx"\n|\r" welcome-message) (cdr p)])
-          [(null? (cdr p))
-           (printf-crlf/encoding *locale-encoding* *client-output-port* "220 ~a" (car p))]
-          (printf-crlf/encoding *locale-encoding* *client-output-port* "220-~a" (car p)))
-        (let loop ([request (read-request *locale-encoding* *client-input-port*)])
-          (when (and request (string? request))
-            (if (regexp-match? #rx"[^ ]+" request)
-                (let* ([cmd (string-upcase (car (regexp-match #rx"[^ ]+" request)))]
-                       [cmdinfo (hash-ref *cmd-voc* cmd #f)])
-                  (if cmdinfo
-                      (with-handlers ([exn:fail:filesystem? 
-                                       (λ (e) 
-                                         (when-drdebug (displayln e))
-                                         (print-crlf/encoding* "550 System error."))]
-                                      [any/c (λ(e) 
-                                               (when-drdebug (displayln e))
-                                               (print-crlf/encoding** 'UNKNOWN-ERROR))])
-                        (if (or *userstruct* (car cmdinfo))
-                            ((cadr cmdinfo) (get-params request))
-                            (print-crlf/encoding** 'PLEASE-LOGIN)))
-                      (print-crlf/encoding** 'CMD-NOT-IMPLEMENTED cmd)))
-                (print-crlf/encoding** 'INVALID-CMD-SYNTAX)))
-          (reset-timer)
-          (sleep .005)
-          (loop (read-request *locale-encoding* *client-input-port*)))))
+        (let-values ([(start-timer pause-timer reset-timer kill-timer)
+                      (alarm-clock 1 no-transfer-time
+                                   (λ()
+                                     (print-crlf/encoding** 'TRANSFER-WAIT-TIME)
+                                     (*quit*)))])
+          (do ([p (regexp-split #rx"\n|\r" welcome-message) (cdr p)])
+            [(null? (cdr p))
+             (printf-crlf/encoding *locale-encoding* *client-output-port* "220 ~a" (car p))]
+            (printf-crlf/encoding *locale-encoding* *client-output-port* "220-~a" (car p)))
+          (start-timer)
+          (let loop ([request (read-request *locale-encoding* *client-input-port*)])
+            (unless (eof-object? request)
+              (pause-timer) 
+              (reset-timer)
+              (if (regexp-match? #rx"[^ ]+" request)
+                  (let* ([cmd (string-upcase (car (regexp-match #rx"[^ ]+" request)))]
+                         [cmdinfo (hash-ref *cmd-voc* cmd #f)])
+                    (if cmdinfo
+                        (with-handlers ([exn:fail:filesystem? 
+                                         (λ (e) 
+                                           (when-drdebug (displayln e))
+                                           (print-crlf/encoding* "550 System error."))]
+                                        [any/c (λ(e) 
+                                                 (when-drdebug (displayln e))
+                                                 (print-crlf/encoding** 'UNKNOWN-ERROR))])
+                          (if (or *userstruct* (car cmdinfo))
+                              ((cadr cmdinfo) (get-params request))
+                              (print-crlf/encoding** 'PLEASE-LOGIN)))
+                        (print-crlf/encoding** 'CMD-NOT-IMPLEMENTED cmd)))
+                  (print-crlf/encoding** 'INVALID-CMD-SYNTAX))
+              (start-timer)
+              (sleep .005)
+              (loop (read-request *locale-encoding* *client-input-port*)))))))
     
     (define (USER-COMMAND params)
       (if params
@@ -700,9 +727,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (if params
           (print-crlf/encoding** 'SYNTAX-ERROR "")
           (begin
-            (kill-current-ftp-process)
             (print-crlf/encoding** 'QUIT)
-            (close-output-port *client-output-port*);ssl required
             (*quit*))))
     
     (define (PWD-COMMAND params)
@@ -777,7 +802,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (and (hash-ref *cmd-voc* "MFMT" #f)
                  (print-crlf/encoding* " MFMT"))
             (and (hash-ref *cmd-voc* "MFF" #f)
-                 (print-crlf/encoding* " MFF"))
+                 (print-crlf/encoding* " MFF Modify;UNIX.mode;UNIX.owner;UNIX.group;"))
             (print-crlf/encoding* " TVFS")
             (print-crlf/encoding** 'END 211))))
     
@@ -1904,11 +1929,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [ssl-key                 path/c]
                        [ssl-certificate         path/c]
                        
-                       [max-allow-wait          exact-nonnegative-integer?]
-                       [transfer-wait-time      exact-nonnegative-integer?]
+                       [max-allow-wait          exact-positive-integer?]
+                       [transfer-wait-time      exact-positive-integer?]
+                       [max-clients-per-IP      exact-positive-integer?]
                        
                        [bad-auth-sleep-sec      exact-nonnegative-integer?]
-                       [max-auth-attempts       exact-nonnegative-integer?]
+                       [max-auth-attempts       exact-positive-integer?]
                        [pass-sleep-sec          exact-nonnegative-integer?]
                        
                        [disable-ftp-commands    (listof symbol?)]
@@ -1930,12 +1956,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 
                 [server-host             "127.0.0.1"]
                 [server-port             21]
-                [ssl-protocol	         #f]
+                [ssl-protocol            #f]
                 [ssl-key                 #f]
                 [ssl-certificate         #f]
                 
                 [max-allow-wait          25]
                 [transfer-wait-time      120]
+                [max-clients-per-IP      5]
                 
                 [bad-auth-sleep-sec      60]
                 [max-auth-attempts       5]
@@ -1953,6 +1980,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;; ---------- Private Definitions ----------
     ;;
     (define users-table (make-users))
+    (define clients-table (make-hash))
     (define state 'stopped)
     (define server-custodian #f)
     (define server-thread #f)
@@ -1994,6 +2022,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                [ssl-server-context ssl-server-ctx]
                                                [ssl-client-context ssl-client-ctx]
                                                [users-table users-table]
+                                               [clients-table clients-table]
                                                [random-gen random-gen]
                                                [server-responses default-server-responses]
                                                [default-locale-encoding default-locale-encoding]
@@ -2012,7 +2041,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                       (open-output-file log-file #:exists 'append))
                                                                     (current-output-port))]
                                                [disable-commands disable-ftp-commands])
-                                          handle-client-request tcp-listener transfer-wait-time)
+                                          handle-client-request 
+                                          tcp-listener transfer-wait-time max-clients-per-IP)
                                     (main-loop))])
                 (set! server-thread (thread main-loop))))))
         (set! state 'running)))

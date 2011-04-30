@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd v1.0.0
+ProRFTPd v1.0.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -26,8 +26,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #lang racket
 
-(require ffi/unsafe
-         racket/date
+(require racket/date
          (file "debug.rkt")
          (for-syntax (file "debug.rkt"))
          (file "lib-ssl.rkt")
@@ -44,6 +43,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    ssl-certificate 
    max-allow-wait
    transfer-wait-time
+   max-clients-per-IP
    bad-auth-sleep-sec
    max-auth-attempts 
    passwd-sleep-sec 
@@ -61,7 +61,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "ProRFTPd v1.0.0 <development>"]
+    (init-field [server-name&version        "ProRFTPd v1.0.1 <development>"]
                 [copyright                  "Copyright (c) 2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -205,6 +205,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                          
                          [max-allow-wait          (ftp-srv-params-max-allow-wait params)]
                          [transfer-wait-time      (ftp-srv-params-transfer-wait-time params)]
+                         [max-clients-per-IP      (ftp-srv-params-max-clients-per-IP params)]
                          
                          [bad-auth-sleep-sec      (ftp-srv-params-bad-auth-sleep-sec params)]
                          [max-auth-attempts       (ftp-srv-params-max-auth-attempts params)]
@@ -352,6 +353,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               [ssl-certificate       "../certs/server-1.pem"]
                               [max-allow-wait        25]
                               [transfer-wait-time    120]
+                              [max-clients-per-IP    5]
                               ;====================
                               [bad-auth-sleep-sec    60]
                               [max-auth-attempts     5]
@@ -400,6 +402,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (set! max-allow-wait (second param)))
                                ((transfer-wait-time)
                                 (set! transfer-wait-time (second param)))
+                               ((max-clients-per-IP)
+                                (set! max-clients-per-IP (second param)))
                                ((bad-auth-sleep-sec)
                                 (set! bad-auth-sleep-sec (second param)))
                                ((max-auth-attempts)
@@ -425,6 +429,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                            ssl-certificate
                                                                            max-allow-wait
                                                                            transfer-wait-time
+                                                                           max-clients-per-IP
                                                                            bad-auth-sleep-sec
                                                                            max-auth-attempts 
                                                                            passwd-sleep-sec 
@@ -475,7 +480,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (cdr conf))))))))
     
     (define/private (format-welcome-msg msg)
-      (regexp-replace #rx"%v" msg server-name&version))))
+      (regexp-replace* #rx"%[Vv]|%[Cc]"
+                       msg 
+                       (λ (prefix)
+                         (case (string->symbol (string-upcase prefix))
+                           [(%V) server-name&version]
+                           [(%C) copyright]
+                           [else prefix]))))))
 
 ;-----------------------------------
 ;              BEGIN

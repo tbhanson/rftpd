@@ -1,6 +1,7 @@
 (ftp-server-users
 ;   Login     | Anonymous? | FTP/Perm |      Root Dir
   ["root"           #f          #f     "/"]
+  ["misha"          #f          #f     #f]
   ;["ftp"            #t          lr     #f]
   ;["anonymous"      #t          lr     "/home/ftp"]
 )

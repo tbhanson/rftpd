@@ -1,4 +1,8 @@
 #|
+
+ProRFTPd Platform Library v1.0
+----------------------------------------------------------------------
+
 Summary:
 This file is part of ProRFTPd.
 
@@ -30,15 +34,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (syntax-case stx ()
     [(_ lib path)
      (with-syntax ([deflib (datum->syntax
-			    stx
-			    (string->symbol
-			     (string-append "def-"
-					    (symbol->string
-					     (syntax->datum #'lib)))))])
-     #'(begin
-	 (define lib (ffi-lib path))
-	 (define-syntax-rule (deflib fun type)
-	   (define-c fun lib (_fun #:save-errno 'posix . type)))))]))
+                            stx
+                            (string->symbol
+                             (string-append "def-"
+                                            (symbol->string
+                                             (syntax->datum #'lib)))))])
+       #'(begin
+           (define lib (ffi-lib path))
+           (define-syntax-rule (deflib fun type)
+             (define-c fun lib (_fun #:save-errno 'posix . type)))))]))
 
 (define-syntax-rule (defconst name value)
   (define-syntax (name so) #'value))
@@ -62,47 +66,47 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (typedef gid_t      _uint32)
 
 (define-cstruct _Stat ([dev dev_t]
-		       [__pad1 _ushort]
-		       [ino ino_t]
-		       [mode mode_t]
-		       [nlink nlink_t]
-		       [uid uid_t]
-		       [gid gid_t]
-		       [rdev dev_t]
-		       [__pad2 _ushort]
-		       [size off_t]
-		       [blksize blksize_t]
-		       [blocks blkcnt_t]
-		       [atime time_t]
-		       [atimensec _ulong]
-		       [mtime time_t]
-		       [mtimensec _ulong]
-		       [ctime time_t]
-		       [ctimensec _ulong]
-		       [__unused _uint64]))
+                       [__pad1 _ushort]
+                       [ino ino_t]
+                       [mode mode_t]
+                       [nlink nlink_t]
+                       [uid uid_t]
+                       [gid gid_t]
+                       [rdev dev_t]
+                       [__pad2 _ushort]
+                       [size off_t]
+                       [blksize blksize_t]
+                       [blocks blkcnt_t]
+                       [atime time_t]
+                       [atimensec _ulong]
+                       [mtime time_t]
+                       [mtimensec _ulong]
+                       [ctime time_t]
+                       [ctimensec _ulong]
+                       [__unused _uint64]))
 
 (define-cstruct _Passwd ([name _string]
-			 [passwd _string]
-			 [uid uid_t]
-			 [gid gid_t]
-			 [gecos _string]
-			 [home _string]
-			 [shell _string]))
+                         [passwd _string]
+                         [uid uid_t]
+                         [gid gid_t]
+                         [gecos _string]
+                         [home _string]
+                         [shell _string]))
 
 (define-cstruct _Group ([name _string]
-			[passwd _string]
-			[gid gid_t]
-			[members _pointer]))
+                        [passwd _string]
+                        [gid gid_t]
+                        [members _pointer]))
 
 (define-cstruct _Spwd ([name _string]
-		       [passwd _string]
-		       [lstchg _long]
-		       [min _long]
-		       [max _long]
-		       [warn _long]
-		       [inact _long]
-		       [expire _long]
-		       [flag _ulong]))
+                       [passwd _string]
+                       [lstchg _long]
+                       [min _long]
+                       [max _long]
+                       [warn _long]
+                       [inact _long]
+                       [expire _long]
+                       [flag _ulong]))
 
 (def-libcrypt crypt (_string _string -> _string))
 

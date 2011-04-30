@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd System Library v1.0.0
+ProRFTPd System Library v1.0
 ----------------------------------------------------------------------
 
 Summary:
