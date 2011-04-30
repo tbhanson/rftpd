@@ -1,4 +1,8 @@
 #|
+
+RFTPd Utils Library v1.1
+----------------------------------------------------------------------
+
 Summary:
 This file is part of Racket FTP Server.
 
@@ -77,10 +81,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define (alarm-clock period count [event (λ() 1)])
   (let* ([tick count]
-         [reset (λ () (set! tick count))]
          [thd (thread (λ ()
                         (do () [(<= tick 0) (event)]
                           (sleep period)
                           (set! tick (sub1 tick)))))]
+         [start (λ () (thread-resume thd))]
+         [pause (λ () (thread-suspend thd))]
+         [reset (λ () (set! tick count))]
          [kill (λ() (kill-thread thd))])
-    (values reset kill)))
+    (pause)
+    (values start pause reset kill)))

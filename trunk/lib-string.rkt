@@ -1,4 +1,8 @@
 #|
+
+RFTPd String Library v1.1
+----------------------------------------------------------------------
+
 Summary:
 This file is part of Racket FTP Server.
 
@@ -49,14 +53,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define (delete-lws str [ws '(#\space #\tab)])
   (do [(len (string-length str))
        (i 0 (add1 i))]
-      [(or (>= i len) (not (memq (string-ref str i) ws)))
-       (substring str i)]))
+    [(or (>= i len) (not (memq (string-ref str i) ws)))
+     (substring str i)]))
 
 (define (delete-rws str [ws '(#\space #\tab)])
   (let ([len (string-length str)])
     (do [(i len (sub1 i))]
-	[(or (<= i 0) (not (memq (string-ref str (sub1 i)) ws)))
-	 (substring str 0 i)])))
+      [(or (<= i 0) (not (memq (string-ref str (sub1 i)) ws)))
+       (substring str 0 i)])))
 
 (define (delete-lrws str [ws '(#\space #\tab)])
   (let ([start 0]
