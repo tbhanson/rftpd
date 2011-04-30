@@ -1,4 +1,8 @@
 #|
+
+RFTPd SSL Library v1.1
+----------------------------------------------------------------------
+
 Summary:
 This file is part of Racket FTP Server. Based on a OpenSSL Racket
 library.
