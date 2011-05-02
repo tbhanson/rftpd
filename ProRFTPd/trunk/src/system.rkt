@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd System Library v1.0
+ProRFTPd System Library v1.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -32,7 +32,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (provide (except-out (all-defined-out)
                      (struct-out ftp-users)
-		     crypt-string))
+                     crypt-string))
 
 (provide/contract
  [crypt-string (string? string? . -> . string?)])
@@ -42,16 +42,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (struct ftp-client (ip [userStruct #:mutable] users))
 (struct ftp-permissions (l? r? a? c? m? f? d?))
 
+(struct exn:posix exn (id errno) #:transparent)
+
 (defconst root-uid 0)
 (defconst root-gid 0)
 
-(define chgids/sem (make-semaphore 1))
+(define chids/sem (make-semaphore 1))
 
 (define (make-users)
   (ftp-users (make-hash) (make-hash)))
 
-(define-syntax-rule (throw-errno fun)
-  (error 'fun "errno=~a" (ffi:saved-errno)))
+(define-syntax-rule (throw-errno* fun errno)
+  (raise (exn:posix (format "~a: errno=~a" 'fun errno) (current-continuation-marks) 'fun errno)))
+
+(define-syntax-rule (throw-errno fun) (throw-errno* fun (ffi:saved-errno)))
 
 (define (clear-users-info users)
   (set-ftp-users-users/login! users (make-hash))
@@ -81,18 +85,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          correct?
          (ftp-permissions l? r? a? c? m? f? d?))))
 
-(define (ftp-chmod spath mode)
-  (unless (zero? (chmod spath mode))
-    (throw-errno chmod)))
-
-(define (ftp-chown spath uid gid)
-  (unless (zero? (chown spath uid gid))
-    (throw-errno chown)))
-
-(define (ftp-mkdir spath [uid root-uid][gid root-gid])
-  (make-directory spath)
-  (ftp-chown spath uid gid))
-
 (define (ftp-useradd users login anonymous? [ftp-perm #f] [root-dir "/"])
   (let ([root-dir (and root-dir (delete-lrws root-dir))]
         [passwdStruct (getpwnam login)])
@@ -110,7 +102,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (ftp-mkdir root-dir 
                             (Passwd-uid passwdStruct) 
                             (Passwd-gid passwdStruct))))
-	  (void))
+          (void))
         (error 'ftp-useradd "user ~a not found." login))))
 
 (define (real-path->ftp-path real-path root-dir [drop-tail-elem 0])
@@ -155,21 +147,72 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (unless (zero? (seteuid euid))
     (throw-errno seteuid)))
 
+(define (ftp-chmod spath mode)
+  (unless (zero? (chmod spath mode))
+    (throw-errno chmod)))
+
+(define (ftp-chown spath uid gid)
+  (unless (zero? (chown spath uid gid))
+    (throw-errno chown)))
+
+(define (ftp-mkdir spath [uid root-uid][gid root-gid])
+  (let ([errno #f])
+    (semaphore-wait chids/sem)
+    (set!-egid&euid gid uid)
+    (unless (zero? (mkdir spath #o755))
+      (set! errno (ffi:saved-errno)))
+    (set!-euid&egid (getuid) (getgid))
+    (semaphore-post chids/sem)
+    (when errno (throw-errno* mkdir errno))))
+
+(define (ftp-utime userstruct spath actime modtime)
+  (let ([utimbuf (make-Utimbuf actime modtime)]
+        [errno #f])
+    (semaphore-wait chids/sem)
+    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (unless (zero? (utime spath utimbuf))
+      (set! errno (ffi:saved-errno)))
+    (set!-euid&egid (getuid) (getgid))
+    (semaphore-post chids/sem)
+    (when errno (throw-errno* utime errno))))
+
+(define (ftp-rmdir userstruct spath)
+  (let ([errno #f])
+    (semaphore-wait chids/sem)
+    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (unless (zero? (rmdir spath))
+      (set! errno (ffi:saved-errno)))
+    (set!-euid&egid (getuid) (getgid))
+    (semaphore-post chids/sem)
+    (when errno (throw-errno* rmdir errno))))
+
+(define (ftp-chmod* userstruct spath mode)
+  (let ([errno #f])
+    (semaphore-wait chids/sem)
+    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (unless (zero? (chmod spath mode))
+      (set! errno (ffi:saved-errno)))
+    (set!-euid&egid (getuid) (getgid))
+    (semaphore-post chids/sem)
+    (when errno (throw-errno* chmod errno))))
+
+(define (ftp-chown* userstruct spath uid gid)
+  (let ([errno #f])
+    (semaphore-wait chids/sem)
+    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (unless (zero? (chown spath uid gid))
+      (set! errno (ffi:saved-errno)))
+    (set!-euid&egid (getuid) (getgid))
+    (semaphore-post chids/sem)
+    (when errno (throw-errno* chmod errno))))
+
 (define (ftp-access spath uid gid mode)
-  (let ([puid (geteuid)]
-        [pgid (getegid)]
-        [result #f])
-    (semaphore-wait chgids/sem)
-    (unless (zero? (setegid gid))
-      (throw-errno setegid))
-    (unless (zero? (seteuid uid))
-      (throw-errno seteuid))
+  (let ([result #f])
+    (semaphore-wait chids/sem)
+    (set!-egid&euid gid uid)
     (set! result (zero? (eaccess spath mode)))
-    (unless (zero? (seteuid puid))
-      (throw-errno seteuid))
-    (unless (zero? (setegid pgid))
-      (throw-errno setegid))
-    (semaphore-post chgids/sem)
+    (set!-euid&egid (getuid) (getgid))
+    (semaphore-post chids/sem)
     result))
 
 (define (get-shadow-passwd login)
@@ -198,7 +241,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (and (zero? (__lxstat STAT-VER-LINUX spath st))
          st)))
 
-(define (uid->login uid)
+(define (uid->uname uid)
   (let ([pwd (getpwuid uid)])
     (and pwd
          (Passwd-name pwd))))
@@ -223,7 +266,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (getgrgid gid-or-grpname)
                  (getgrnam gid-or-grpname))]
         [uname (if (number? uid-or-usrname)
-                   (uid->login uid-or-usrname)
+                   (uid->uname uid-or-usrname)
                    uid-or-usrname)])
     (and grp uname
          (or (string=? (Group-name grp) uname)

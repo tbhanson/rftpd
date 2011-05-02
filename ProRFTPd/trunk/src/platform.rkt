@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Platform Library v1.0
+ProRFTPd Platform Library v1.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -108,6 +108,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [expire _long]
                        [flag _ulong]))
 
+(define-cstruct _Utimbuf ([actime time_t]
+                          [modtime time_t]))
+
 (def-libcrypt crypt (_string _string -> _string))
 
 (def-libc daemon (_int _int -> _int))
@@ -129,6 +132,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (defconst STAT-VER-LINUX 3)
 (def-libc __xstat (_int _string _Stat-pointer -> _int))
 (def-libc __lxstat (_int _string _Stat-pointer -> _int))
+
+(def-libc utime (_string _Utimbuf-pointer -> _int))
+
+(def-libc mkdir (_string mode_t -> _int))
+(def-libc rmdir (_string -> _int))
 
 (def-libc getgrgid (gid_t -> (_or-null _Group-pointer)))
 (def-libc getgrnam (_string -> (_or-null _Group-pointer)))

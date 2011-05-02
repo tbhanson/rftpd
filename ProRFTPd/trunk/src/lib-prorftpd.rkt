@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Library v1.0.5
+ProRFTPd Library v1.0.6
 ----------------------------------------------------------------------
 
 Summary:
@@ -88,6 +88,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                   (RU . "257 ~s - текущий каталог."))
      (CMD-SUCCESSFUL (EN . "~a ~a command successful.")
                      (RU . "~a Команда ~a выполнена."))
+     (CMD-FAILED (EN . "~a ~a command failed.")
+                 (RU . "~a Команда ~a не выполнена."))
      (END (EN . "~a End")
           (RU . "~a Конец"))
      (FEAT-LIST (EN . "211-Extensions supported:")
@@ -116,14 +118,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (RU . "501 Неподдерживаемый тип. Поддерживаемые типы I и А."))
      (UNKNOWN-TYPE (EN . "501 Unknown ~a type.")
                    (RU . "501 Неизвестный ~a тип."))
-     (DIR-EXIST (EN . "550 Can't create directory. Directory exist!")
-                (RU . "550 Невозможно создать каталог. Каталог существует!"))
+     (DIR-EXIST (EN . "550 Can't create directory. File or directory exist!")
+                (RU . "550 Невозможно создать каталог. Каталог или файл уже существует!"))
      (DIR-CREATED (EN . "257 ~s - directory successfully created.")
                   (RU . "257 ~s - создан каталог."))
      (CREATE-DIR-PERM-DENIED (EN . "550 Can't create directory. Permission denied!")
                              (RU . "550 Невозможно создать каталог. Доступ запрещен!"))
      (CANT-CREATE-DIR (EN . "550 Can't create directory.")
                       (RU . "550 Невозможно создать каталог."))
+     (CANT-RMDIR (EN . "550 Can't remove directory.")
+                 (RU . "550 Невозможно удалить каталог."))
      (DELDIR-NOT-EMPTY (EN . "550 Can't delete directory. Directory not empty!")
                        (RU . "550 Не удается удалить каталог. Каталог не пуст!"))
      (DELDIR-PERM-DENIED (EN . "550 Can't delete directory. Permission denied!")
@@ -132,13 +136,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               (RU . "550 Невозможно дописать в файл. Доступ запрещен!"))
      (STORE-FILE-PERM-DENIED (EN . "550 Can't store file. Permission denied!")
                              (RU . "550 Невозможно сохранить файл. Доступ запрещен!"))
-     (CANT-STORE-FILE (EN . "550 Can't store file.")
-                      (RU . "550 Невозможно сохранить файл."))
      (DELFILE-PERM-DENIED (EN . "550 Can't delete file. Permission denied!")
                           (RU . "550 Не удается удалить файл. Доступ запрещен!"))
      (FILE-NOT-FOUND (EN . "550 File not found.")
                      (RU . "550 Файл не найден."))
-     (FILE-DIR-NOT-FOUND (EN . "550 File or directory not found.")
+     (FILE-DIR-NOT-FOUND (EN . "550 No such file or directory.")
                          (RU . "550 Файл или каталог отсутствует."))
      (MLST-LISTING (EN . "250-Listing:")
                    (RU . "250-Листинг:"))
@@ -150,8 +152,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (RU . "200 Включены все доступные MLST режимы."))
      (RENAME-OK (EN . "350 File or directory exists, ready for destination name.")
                 (RU . "350 Файл или каталог существует, ожидается переименование."))
-     (CANT-RENAME-EXIST (EN . "550 File or directory exist.")
-                        (RU . "550 Обнаружен файл или каталог с подобным именем."))
+     (CANT-RENAME-EXIST (EN . "550 Can't rename file or directory. File or directory exist!")
+                        (RU . "550 Невозможно переименовать файл или каталог. Каталог или файл уже существует!"))
      (CANT-RENAME (EN . "550 Can't rename file or directory.")
                   (RU . "550 Невозможно переименовать файл или каталог."))
      (RENAME-PERM-DENIED (EN . "550 Can't rename file or directory. Permission denied!")
@@ -182,6 +184,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                           (RU . "505 Запрещенный адрес или порт."))
      (MFMT-OK (EN . "213 Modify=~a; ~a")
               (RU . "213 Modify=~a; ~a"))
+     (CANT-MFMT (EN . "550 Can't modify a last modification time.")
+                (RU . "550 Невозможно изменить время последней модификации."))
      (MFF-OK (EN . "213 ~a ~a")
              (RU . "213 ~a ~a"))
      (UNKNOWN-ERROR (EN . "410 Unknown error.")
@@ -1076,7 +1080,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (let* ([full-path (string-append *root-dir* ftp-path)]
                   [stat (ftp-lstat full-path)]
                   [mode (Stat-mode stat)]
-                  [owner (uid->login (Stat-uid stat))]
+                  [owner (uid->uname (Stat-uid stat))]
                   [group (gid->gname (Stat-gid stat))])
              (format "~a~a~a~a ~3F ~8F ~8F ~14F ~a" 
                      (cond
@@ -1204,69 +1208,66 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (MKD-COMMAND params)
       (if params
-          (let* ([spath (let ([p (build-ftp-spath* params)]) (deltail/ p))]
-                 [full-spath (string-append *root-dir* spath)])
-            (if (directory-exists? full-spath)
-                (print-crlf/encoding** 'DIR-EXIST)
-                (let* ([parent (path->string (path-only spath))]
-                       [full-parent (string-append *root-dir* parent)])
-                  (if (directory-exists? full-parent)
-                      (if (ftp-dir-mkdir-ok? parent)
-                          (begin
-                            (ftp-mkdir full-spath (ftp-user-uid *userstruct*) (ftp-user-gid *userstruct*))
-                            (print-log-event (format "Make directory ~a" (simplify-ftp-path spath)))
-                            (print-crlf/encoding** 'DIR-CREATED (simplify-ftp-path spath)))
-                          (print-crlf/encoding** 'CREATE-DIR-PERM-DENIED))
-                      (print-crlf/encoding** 'CANT-CREATE-DIR)))))
+          (if current-user-mkdir-ok?
+              (let* ([spath (let ([p (build-ftp-spath* params)]) (deltail/ p))]
+                     [full-spath (string-append *root-dir* spath)])
+                (with-handlers ([exn:posix? (λ (e)
+                                              (case (exn:posix-errno e)
+                                                [(1 13) (print-crlf/encoding** 'CREATE-DIR-PERM-DENIED)]
+                                                [(17) (print-crlf/encoding** 'DIR-EXIST)]
+                                                [(2) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
+                                                [else (print-crlf/encoding** 'CANT-CREATE-DIR)]))])
+                  (ftp-mkdir full-spath (ftp-user-uid *userstruct*) (ftp-user-gid *userstruct*))
+                  (print-log-event (format "Make directory ~a" (simplify-ftp-path spath)))
+                  (print-crlf/encoding** 'DIR-CREATED (simplify-ftp-path spath))))
+              (print-crlf/encoding** 'CREATE-DIR-PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (RMD-COMMAND params)
       (if params
-          (let* ([spath (let ([p (build-ftp-spath* params)]) (deltail/ p))]
-                 [full-spath (string-append *root-dir* spath)])
-            (if (and (ftp-dir-execute-ok? spath)
-                     (not (link-exists? full-spath))
-                     (not (= (file-or-directory-identity full-spath)
-                             (file-or-directory-identity *root-dir*))))
-                (if (ftp-dir-delete-ok? (simplify-ftp-path spath 1))
-                    (let ([lst (directory-list full-spath)])
-                      (if (zero? (length lst))
-                          (with-handlers ([exn:fail:filesystem? 
-                                           (λ (e) (print-crlf/encoding* "550 System error."))])
-                            (delete-directory full-spath)
-                            (print-log-event (format "Remove a directory ~a" (simplify-ftp-path spath)))
-                            (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RMD"))
-                          (print-crlf/encoding** 'DELDIR-NOT-EMPTY)))
-                    (print-crlf/encoding** 'DELDIR-PERM-DENIED))
-                (print-crlf/encoding** 'DIR-NOT-FOUND)))
+          (if current-user-delete-ok?
+              (let* ([spath (let ([p (build-ftp-spath* params)]) (deltail/ p))]
+                     [full-spath (string-append *root-dir* spath)])
+                (if (= (file-or-directory-identity full-spath)
+                       (file-or-directory-identity *root-dir*))
+                    (print-crlf/encoding** 'DIR-NOT-FOUND)
+                    (with-handlers ([exn:posix? (λ (e)
+                                                  (case (exn:posix-errno e)
+                                                    [(1 13) (print-crlf/encoding** 'DELDIR-PERM-DENIED)]
+                                                    [(39) (print-crlf/encoding** 'DELDIR-NOT-EMPTY)]
+                                                    [(20 2) (print-crlf/encoding** 'DIR-NOT-FOUND)]
+                                                    [else (print-crlf/encoding** 'CANT-RMDIR)]))])
+                      (ftp-rmdir *userstruct* full-spath)
+                      (print-log-event (format "Remove a directory ~a" (simplify-ftp-path spath)))
+                      (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RMD"))))
+              (print-crlf/encoding** 'DELDIR-PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (APPE-COMMAND params)
       (if params
-          (let* ([spath (build-ftp-spath* params)]
-                 [full-spath (string-append *root-dir* spath)])
-            (if (and (not (eq? (string-ref spath (sub1 (string-length spath))) #\/))
-                     (ftp-dir-execute-ok? (path->string (path-only spath)))
-                     (file-exists? full-spath))
-                (if (and current-user-store&append-ok?
-                         (ftp-access-ok? spath 2))
-                    (ftp-store-file *userstruct* full-spath 'append)
-                    (print-crlf/encoding** 'APPEND-FILE-PERM-DENIED))
-                (print-crlf/encoding** 'FILE-NOT-FOUND)))
+          (if current-user-store&append-ok?
+              (let* ([spath (build-ftp-spath* params)]
+                     [full-spath (string-append *root-dir* spath)])
+                (if (file-exists? full-spath)
+                    (if (ftp-access-ok? spath 2)
+                        (ftp-store-file *userstruct* full-spath 'append)
+                        (print-crlf/encoding** 'APPEND-FILE-PERM-DENIED))
+                    (print-crlf/encoding** 'FILE-NOT-FOUND)))
+              (print-crlf/encoding** 'APPEND-FILE-PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
-    (define (STOR-COMMAND params);; ???
+    (define (STOR-COMMAND params)
       (if params
-          (let* ([spath (build-ftp-spath* params)]
-                 [full-spath (string-append *root-dir* spath)]
-                 [parent (path->string (path-only spath))])
-            (if (and (not (eq? (string-ref spath (sub1 (string-length spath))) #\/))
-                     (ftp-dir-execute-ok? parent))
-                (if (and current-user-store&append-ok?
-                         (ftp-access-ok? parent 2))
-                    (ftp-store-file *userstruct* full-spath 'truncate)
-                    (print-crlf/encoding** 'STORE-FILE-PERM-DENIED))
-                (print-crlf/encoding** 'CANT-STORE-FILE)))
+          (if current-user-store&append-ok?
+              (let* ([spath (build-ftp-spath* params)]
+                     [full-spath (string-append *root-dir* spath)]
+                     [parent (simplify-ftp-path spath 1)])
+                (if (directory-exists? (string-append *root-dir* parent))
+                    (if (ftp-access-ok? parent 3)
+                        (ftp-store-file *userstruct* full-spath 'truncate)
+                        (print-crlf/encoding** 'STORE-FILE-PERM-DENIED))
+                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
+              (print-crlf/encoding** 'STORE-FILE-PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (STOU-COMMAND params)
@@ -1286,10 +1287,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (RETR-COMMAND params)
       (if params
           (let* ([spath (build-ftp-spath* params)]
-                 [full-spath (string-append *root-dir* spath)]
-                 [parent (path->string (path-only spath))])
-            (if (and (file-exists? full-spath)
-                     (ftp-dir-execute-ok? parent))
+                 [full-spath (string-append *root-dir* spath)])
+            (if (file-exists? full-spath)
                 (if (ftp-access-ok? spath 4)
                     (ftp-data-transfer full-spath #t)
                     (print-crlf/encoding** 'PERM-DENIED))
@@ -1298,19 +1297,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (DELE-COMMAND params)
       (if params
-          (let* ([spath (build-ftp-spath* params)]
-                 [parent (path->string (path-only spath))]
-                 [full-spath (string-append *root-dir* spath)])
-            (if (and (ftp-file-type-obj-exists? spath)
-                     (ftp-dir-execute-ok? parent))
-                (if (and current-user-delete-ok?
-                         (ftp-access-ok? parent 2))
-                    (begin
-                      (delete-file full-spath)
-                      (print-log-event (format "Delete a file ~a" (simplify-ftp-path spath)))
-                      (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "DELE"))
-                    (print-crlf/encoding** 'DELFILE-PERM-DENIED))
-                (print-crlf/encoding** 'FILE-NOT-FOUND)))
+          (if current-user-delete-ok?
+              (let* ([spath (build-ftp-spath* params)]
+                     [full-spath (string-append *root-dir* spath)])
+                (if (file-exists? full-spath)
+                    (if (ftp-access-ok? (simplify-ftp-path spath 1) 3)
+                        (begin
+                          (delete-file full-spath)
+                          (print-log-event (format "Delete a file ~a" (simplify-ftp-path spath)))
+                          (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "DELE"))
+                        (print-crlf/encoding** 'DELFILE-PERM-DENIED))
+                    (print-crlf/encoding** 'FILE-NOT-FOUND)))
+              (print-crlf/encoding** 'DELFILE-PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (SIZE-COMMAND params)
@@ -1328,7 +1326,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (let* ([spath (build-ftp-spath* params)]
                  [full-path (string-append *root-dir* spath)])
             (if (and (file-exists? full-path)
-                     (ftp-dir-execute-ok? (simplify-ftp-path spath 1)))
+                     (ftp-dir-execute-ok? (path->string (path-only spath))))
                 (print-crlf/encoding* (format "213 ~a"
                                               (seconds->mdtm-time-format
                                                (file-or-directory-modify-seconds full-path))))
@@ -1337,275 +1335,261 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (RNFR-COMMAND params)
       (if params
-          (let* ([spath (build-ftp-spath* params)]
-                 [parent (simplify-ftp-path spath 1)]
-                 [path (string-append *root-dir* spath)])
-            (if (and (ftp-obj-exists? spath)
-                     (ftp-dir-execute-ok? parent))
-                (if (and current-user-rename-ok?
-                         (ftp-access-ok? parent 2))
-                    (begin
-                      (set! *rename-path* path)
-                      (print-crlf/encoding** 'RENAME-OK))
-                    (print-crlf/encoding** 'PERM-DENIED))
-                (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
+          (if current-user-rename-ok?
+              (let* ([spath (build-ftp-spath* params)]
+                     [full-spath (string-append *root-dir* spath)])
+                (if (and (ftp-stat full-spath)
+                         (not (= (file-or-directory-identity full-spath)
+                                 (file-or-directory-identity *root-dir*))))
+                    (if (ftp-access-ok? (simplify-ftp-path spath 1) 3)
+                        (begin
+                          (set! *rename-path* full-spath)
+                          (print-crlf/encoding** 'RENAME-OK))
+                        (print-crlf/encoding** 'PERM-DENIED))
+                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
+              (print-crlf/encoding** 'PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (RNTO-COMMAND params)
       (if params
-          (if *rename-path*
+          (if (and current-user-rename-ok? *rename-path*)
               (let* ([new-path (let ([p (build-ftp-spath* params)]) (deltail/ p))]
                      [parent-new (and (path-string? new-path)
                                       (path->string (path-only new-path)))])
-                (if (and parent-new (ftp-dir-execute-ok? parent-new))
-                    (if (ftp-obj-exists? new-path)
-                        (print-crlf/encoding** 'CANT-RENAME-EXIST)
-                        (if (and current-user-rename-ok?
-                                 (ftp-access-ok? parent-new 2))
+                (if (and parent-new 
+                         (ftp-stat (string-append *root-dir* parent-new)))
+                    (if (ftp-access-ok? parent-new 3)
+                        (if (ftp-stat (string-append *root-dir* new-path))
+                            (print-crlf/encoding** 'CANT-RENAME-EXIST)
                             (with-handlers ([exn:fail:filesystem?
                                              (λ (e) (print-crlf/encoding** 'CANT-RENAME))])
                               (rename-file-or-directory *rename-path* (string-append *root-dir* new-path))
                               (print-log-event (format "Rename the file or directory from ~a to ~a"
                                                        (real-path->ftp-path *rename-path* *root-dir*)
                                                        (simplify-ftp-path new-path)))
-                              (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RNTO"))
-                            (print-crlf/encoding** 'RENAME-PERM-DENIED)))
-                    (print-crlf/encoding** 'CANT-RENAME))
+                              (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RNTO")))
+                        (print-crlf/encoding** 'RENAME-PERM-DENIED))
+                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))
                 (set! *rename-path* #f))
               (print-crlf/encoding** 'RENAME-PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (MFMT-COMMAND params)
       (if (and params (regexp-match? #rx"^[0-9]+[ ]+.+" params))
-          (let* ([mt (car (regexp-match #rx"[0-9]+" params))]
-                 [sec (mdtm-time-format->seconds mt)]
-                 [ftp-path (let ([p (get-params params)])
-                             (and p (build-ftp-spath* p)))])
-            (if (and sec ftp-path)
-                (let ([full-path (string-append *root-dir* ftp-path)]
-                      [stat (ftp-obj-stat ftp-path)])
-                  (if (and stat (ftp-dir-execute-ok? (simplify-ftp-path ftp-path 1)))
-                      (if (or (= (Stat-uid stat) (ftp-user-uid *userstruct*))
-                              (grpmember? root-gid (ftp-user-uid *userstruct*)))
-                          (begin
-                            (file-or-directory-modify-seconds full-path sec)
-                            (print-log-event (format "Modify a last modification time of ~s in ~a"
-                                                     (simplify-ftp-path ftp-path) mt))
-                            (print-crlf/encoding** 'MFMT-OK mt (simplify-ftp-path ftp-path)))
-                          (print-crlf/encoding** 'PERM-DENIED))
-                      (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))
-                (print-crlf/encoding** 'SYNTAX-ERROR "")))
+          (if current-user-store&append-ok?
+              (let* ([mt (car (regexp-match #rx"[0-9]+" params))]
+                     [modtime (mdtm-time-format->seconds mt)]
+                     [ftp-path (let ([p (get-params params)])
+                                 (and p (build-ftp-spath* p)))])
+                (if (and modtime ftp-path)
+                    (with-handlers ([exn:posix? (λ (e)
+                                                  (case (exn:posix-errno e)
+                                                    [(1 13) (print-crlf/encoding** 'PERM-DENIED)]
+                                                    [(2) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
+                                                    [else (print-crlf/encoding** 'CANT-MFMT)]))])
+                      (ftp-utime *userstruct* (string-append *root-dir* ftp-path) modtime modtime)
+                      (print-log-event (format "Modify a last modification time of ~s in ~a"
+                                               (simplify-ftp-path ftp-path) mt))
+                      (print-crlf/encoding** 'MFMT-OK mt (simplify-ftp-path ftp-path)))
+                    (print-crlf/encoding** 'SYNTAX-ERROR "")))
+              (print-crlf/encoding** 'PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (MFF-COMMAND params)
       (call/cc 
        (λ (return)
          (local [(define (change-mtime mt ftp-path)
-                   (let ([sec (mdtm-time-format->seconds mt)])
-                     (if sec
-                         (let ([full-path (string-append *root-dir* ftp-path)]
-                               [stat (ftp-obj-stat ftp-path)])
-                           (if (and stat (ftp-dir-execute-ok? (simplify-ftp-path ftp-path 1)))
-                               (if (or (= (Stat-uid stat) (ftp-user-uid *userstruct*))
-                                       (grpmember? root-gid (ftp-user-uid *userstruct*)))
-                                   (begin
-                                     (file-or-directory-modify-seconds full-path sec)
-                                     (print-log-event (format "Modify a last modification time of ~s in ~a"
-                                                              (simplify-ftp-path ftp-path) mt)))
-                                   (return (print-crlf/encoding** 'PERM-DENIED)))
-                               (return (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
+                   (let ([modtime (mdtm-time-format->seconds mt)])
+                     (if modtime
+                         (with-handlers ([exn:posix? (λ (e)
+                                                       (case (exn:posix-errno e)
+                                                         [(1 13) (print-crlf/encoding** 'PERM-DENIED)]
+                                                         [(2) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
+                                                         [else (print-crlf/encoding** 'CMD-FAILED 550 "MFF")])
+                                                       (return))])
+                           (ftp-utime *userstruct* (string-append *root-dir* ftp-path) modtime modtime)
+                           (print-log-event (format "Modify a last modification time of ~s in ~a"
+                                                    (simplify-ftp-path ftp-path) mt)))
                          (return (print-crlf/encoding** 'SYNTAX-ERROR "MODIFY:")))))
                  
-                 (define (change-mode strmode ftp-path)
-                   (let ([permis (string->number strmode 8)]
-                         [full-path (string-append *root-dir* ftp-path)]
-                         [stat (ftp-obj-stat ftp-path)])
-                     (if (and stat (ftp-dir-execute-ok? (simplify-ftp-path ftp-path 1)))
-                         (if (or (= (Stat-uid stat) (ftp-user-uid *userstruct*))
-                                 (grpmember? root-gid (ftp-user-uid *userstruct*)))
-                             (begin
-                               (ftp-chmod full-path permis)
-                               (print-log-event (format "Change the permissions of a ~a" 
-                                                        (simplify-ftp-path ftp-path))))
-                             (return (print-crlf/encoding** 'PERM-DENIED)))
-                         (return (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
+                 (define (change-mode mode ftp-path)
+                   (with-handlers ([exn:posix? (λ (e)
+                                                 (case (exn:posix-errno e)
+                                                   [(1 13) (print-crlf/encoding** 'PERM-DENIED)]
+                                                   [(2 20) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
+                                                   [else (print-crlf/encoding** 'CMD-FAILED 550 "MFF")])
+                                                 (return))])
+                     (ftp-chmod* *userstruct* (string-append *root-dir* ftp-path) mode)
+                     (print-log-event (format "Change the permissions of a ~a" 
+                                              (simplify-ftp-path ftp-path)))))
                  
                  (define (change-owner owner ftp-path)
-                   (let ([full-path (string-append *root-dir* ftp-path)]
-                         [stat (ftp-obj-stat ftp-path)])
-                     (if (and stat (ftp-dir-execute-ok? (simplify-ftp-path ftp-path 1)))
-                         (let ([uid (if (regexp-match? #rx"^[0-9]+$" owner)
-                                        (let ([uid (string->number owner)])
-                                          (and (>= uid 0)
-                                               (<= uid #xffffffff)
-                                               uid))
-                                        (login->uid owner))])
-                           (if (and uid
-                                    (or (grpmember? root-gid (ftp-user-uid *userstruct*))
-                                        (string=? owner *login*)))
-                               (begin
-                                 (ftp-chown full-path uid (Stat-gid stat))
-                                 (print-log-event (format "Change the owner of a ~a" 
-                                                          (simplify-ftp-path ftp-path))))
-                               (return (print-crlf/encoding** 'PERM-DENIED))))
-                         (return (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
+                   (let ([uid (if (regexp-match? #rx"^[0-9]+$" owner)
+                                  (let ([uid (string->number owner)])
+                                    (and (>= uid 0)
+                                         (< uid #xffffffff)
+                                         uid))
+                                  (login->uid owner))])
+                     (if uid
+                         (with-handlers ([exn:posix? (λ (e)
+                                                       (case (exn:posix-errno e)
+                                                         [(1 13) (print-crlf/encoding** 'PERM-DENIED)]
+                                                         [(2 20) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
+                                                         [else (print-crlf/encoding** 'CMD-FAILED 550 "MFF")])
+                                                       (return))])
+                           (ftp-chown* *userstruct* (string-append *root-dir* ftp-path) uid #xffffffff)
+                           (print-log-event (format "Change the owner of a ~a" 
+                                                    (simplify-ftp-path ftp-path))))
+                         (return (print-crlf/encoding** 'PERM-DENIED)))))
                  
                  (define (change-group group ftp-path)
-                   (let ([full-path (string-append *root-dir* ftp-path)]
-                         [stat (ftp-obj-stat ftp-path)])
-                     (if (and stat (ftp-dir-execute-ok? (simplify-ftp-path ftp-path 1)))
-                         (let ([gid (if (regexp-match? #rx"^[0-9]+$" group)
-                                        (let ([gid (string->number group)])
-                                          (and (>= gid 0)
-                                               (<= gid #xffffffff)
-                                               gid))
-                                        (gname->gid group))])
-                           (if (and gid
-                                    (or (grpmember? gid (ftp-user-uid *userstruct*))
-                                        (grpmember? root-gid (ftp-user-uid *userstruct*))))
-                               (begin
-                                 (ftp-chown full-path (Stat-uid stat) gid)
-                                 (print-log-event (format "Change the group of a ~a" 
-                                                          (simplify-ftp-path ftp-path))))
-                               (return (print-crlf/encoding** 'PERM-DENIED))))
-                         (return (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))]
+                   (let ([gid (if (regexp-match? #rx"^[0-9]+$" group)
+                                  (let ([gid (string->number group)])
+                                    (and (>= gid 0)
+                                         (< gid #xffffffff)
+                                         gid))
+                                  (gname->gid group))])
+                     (if gid
+                         (with-handlers ([exn:posix? (λ (e)
+                                                       (case (exn:posix-errno e)
+                                                         [(1 13) (print-crlf/encoding** 'PERM-DENIED)]
+                                                         [(2 20) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
+                                                         [else (print-crlf/encoding** 'CMD-FAILED 550 "MFF")])
+                                                       (return))])
+                           (ftp-chown* *userstruct* (string-append *root-dir* ftp-path) #xffffffff gid)
+                           (print-log-event (format "Change the group of a ~a" 
+                                                    (simplify-ftp-path ftp-path))))
+                         (return (print-crlf/encoding** 'PERM-DENIED)))))]
            (let ([modify #f]
                  [unix-mode #f]
                  [unix-owner #f]
                  [unix-group #f])
              (if (and params (regexp-match? #rx"^([A-z\\.]+=[^ \t]+;)+[ ]+.+" params))
-                 (let* ([lst (string-split-char #\; params)]
-                        [path (delete-lws (last lst))]
-                        [facts (remove (last lst) lst)])
-                   (if (and (pair? facts) (path-string? path))
-                       (let ([ftp-path (build-ftp-spath* path)])
-                         (for-each (λ (f)
-                                     (let ([l (string-split-char #\= f)])
-                                       (case (string->symbol (string-upcase (car l)))
-                                         [(MODIFY)
-                                          (if (and (not modify) (regexp-match? #rx"^[0-9]+$" (cadr l)))
-                                              (set! modify (cadr l))
-                                              (return (print-crlf/encoding** 'SYNTAX-ERROR "MODIFY:")))]
-                                         [(UNIX.MODE) 
-                                          (if (and (not unix-mode) (regexp-match? #rx"^[0-7]?[0-7][0-7][0-7]$" (cadr l)))
-                                              (set! unix-mode (cadr l))
-                                              (return (print-crlf/encoding** 'SYNTAX-ERROR "UNIX.MODE:")))]
-                                         [(UNIX.OWNER) 
-                                          (if (and (not unix-owner) (regexp-match? #rx"^[^ ]+$" (cadr l)))
-                                              (set! unix-owner (cadr l))
-                                              (return (print-crlf/encoding** 'SYNTAX-ERROR "UNIX.OWNER:")))]
-                                         [(UNIX.GROUP) 
-                                          (if (and (not unix-group) (regexp-match? #rx"^[^ ]+$" (cadr l)))
-                                              (set! unix-group (cadr l))
-                                              (return (print-crlf/encoding** 'SYNTAX-ERROR "UNIX.GROUP:")))]
-                                         [else (return (print-crlf/encoding** 'SYNTAX-ERROR ""))])))
-                                   facts)
-                         (when modify (change-mtime modify ftp-path))
-                         (when unix-mode (change-mode unix-mode ftp-path))
-                         (when unix-owner (change-owner unix-owner ftp-path))
-                         (when unix-group (change-group unix-group ftp-path))
-                         (print-crlf/encoding** 'MFF-OK
-                                                (string-append (if modify (format "Modify=~a;" modify) "")
-                                                               (if unix-mode (format "UNIX.mode=~a;" unix-mode) "")
-                                                               (if unix-owner (format "UNIX.owner=~a;" unix-owner) "")
-                                                               (if unix-group (format "UNIX.group=~a;" unix-group) ""))
-                                                (simplify-ftp-path ftp-path)))
-                       (print-crlf/encoding** 'SYNTAX-ERROR "")))
+                 (if current-user-store&append-ok?
+                     (let* ([lst (string-split-char #\; params)]
+                            [path (delete-lws (last lst))]
+                            [facts (remove (last lst) lst)])
+                       (if (and (pair? facts) (path-string? path))
+                           (let ([ftp-path (build-ftp-spath* path)])
+                             (for-each (λ (f)
+                                         (let ([l (string-split-char #\= f)])
+                                           (case (string->symbol (string-upcase (car l)))
+                                             [(MODIFY)
+                                              (if (and (not modify) (regexp-match? #rx"^[0-9]+$" (cadr l)))
+                                                  (set! modify (cadr l))
+                                                  (return (print-crlf/encoding** 'SYNTAX-ERROR "MODIFY:")))]
+                                             [(UNIX.MODE) 
+                                              (if (and (not unix-mode) (regexp-match? #rx"^[0-7]?[0-7][0-7][0-7]$" (cadr l)))
+                                                  (set! unix-mode (cadr l))
+                                                  (return (print-crlf/encoding** 'SYNTAX-ERROR "UNIX.MODE:")))]
+                                             [(UNIX.OWNER) 
+                                              (if (and (not unix-owner) (regexp-match? #rx"^[^ ]+$" (cadr l)))
+                                                  (set! unix-owner (cadr l))
+                                                  (return (print-crlf/encoding** 'SYNTAX-ERROR "UNIX.OWNER:")))]
+                                             [(UNIX.GROUP) 
+                                              (if (and (not unix-group) (regexp-match? #rx"^[^ ]+$" (cadr l)))
+                                                  (set! unix-group (cadr l))
+                                                  (return (print-crlf/encoding** 'SYNTAX-ERROR "UNIX.GROUP:")))]
+                                             [else (return (print-crlf/encoding** 'SYNTAX-ERROR ""))])))
+                                       facts)
+                             (when modify (change-mtime modify ftp-path))
+                             (when unix-mode (change-mode (string->number unix-mode 8) ftp-path))
+                             (when unix-owner (change-owner unix-owner ftp-path))
+                             (when unix-group (change-group unix-group ftp-path))
+                             (print-crlf/encoding** 'MFF-OK
+                                                    (string-append (if modify (format "Modify=~a;" modify) "")
+                                                                   (if unix-mode (format "UNIX.mode=~a;" unix-mode) "")
+                                                                   (if unix-owner (format "UNIX.owner=~a;" unix-owner) "")
+                                                                   (if unix-group (format "UNIX.group=~a;" unix-group) ""))
+                                                    (simplify-ftp-path ftp-path)))
+                           (print-crlf/encoding** 'SYNTAX-ERROR "")))
+                     (print-crlf/encoding** 'PERM-DENIED))
                  (print-crlf/encoding** 'SYNTAX-ERROR "")))))))
     
     (define (SITE-COMMAND params)
       (local
-        [(define (chmod permis path)
-           (let* ([spath (build-ftp-spath* path)]
-                  [full-path (string-append *root-dir* spath)]
-                  [stat (ftp-obj-stat spath)])
-             (if (and stat (ftp-dir-execute-ok? (simplify-ftp-path spath 1)))
-                 (if (or ((Stat-uid stat). = .(ftp-user-uid *userstruct*))
-                         (grpmember? root-gid (ftp-user-uid *userstruct*)))
-                     (begin
-                       (ftp-chmod full-path permis)
-                       (print-log-event (format "Change the permissions of a ~a" 
-                                                (simplify-ftp-path spath)))
-                       (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHMOD"))
-                     (print-crlf/encoding** 'PERM-DENIED))
-                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
+        [(define (chmod mode ftp-path)
+           (with-handlers ([exn:posix? (λ (e)
+                                         (case (exn:posix-errno e)
+                                           [(1 13) (print-crlf/encoding** 'PERM-DENIED)]
+                                           [(2 20) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
+                                           [else (print-crlf/encoding** 'CMD-FAILED 550 "SITE CHMOD")]))])
+             (ftp-chmod* *userstruct* (string-append *root-dir* ftp-path) mode)
+             (print-log-event (format "Change the permissions of a ~a" 
+                                      (simplify-ftp-path ftp-path)))
+             (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHMOD")))
          
-         (define (chown owner path)
-           (let* ([spath (build-ftp-spath* path)]
-                  [full-path (string-append *root-dir* spath)]
-                  [stat (ftp-obj-stat spath)])
-             (if (and (ftp-obj-exists? spath)
-                      (ftp-dir-execute-ok? (simplify-ftp-path spath 1)))
-                 (let ([uid (if (regexp-match? #rx"^[0-9]+$" owner)
-                                (let ([uid (string->number owner)])
-                                  (and (>= uid 0)
-                                       (<= uid #xffffffff)
-                                       uid))
-                                (login->uid owner))])
-                   (if (and uid
-                            (or (grpmember? root-gid (ftp-user-uid *userstruct*))
-                                (string=? owner *login*)))
-                       (begin
-                         (ftp-chown full-path uid (Stat-gid stat))
-                         (print-log-event (format "Change the owner of a ~a" 
-                                                  (simplify-ftp-path spath)))
-                         (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHOWN"))
-                       (print-crlf/encoding** 'PERM-DENIED)))
-                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))
+         (define (chown owner ftp-path)
+           (let ([uid (if (regexp-match? #rx"^[0-9]+$" owner)
+                          (let ([uid (string->number owner)])
+                            (and (>= uid 0)
+                                 (< uid #xffffffff)
+                                 uid))
+                          (login->uid owner))])
+             (if uid
+                 (with-handlers ([exn:posix? (λ (e)
+                                               (case (exn:posix-errno e)
+                                                 [(1 13) (print-crlf/encoding** 'PERM-DENIED)]
+                                                 [(2 20) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
+                                                 [else (print-crlf/encoding** 'CMD-FAILED 550 "SITE CHOWN")]))])
+                   (ftp-chown* *userstruct* (string-append *root-dir* ftp-path) uid #xffffffff)
+                   (print-log-event (format "Change the owner of a ~a" 
+                                            (simplify-ftp-path ftp-path)))
+                   (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHOWN"))
+                 (print-crlf/encoding** 'PERM-DENIED))))
          
-         (define (chgrp group path)
-           (let* ([spath (build-ftp-spath* path)]
-                  [full-path (string-append *root-dir* spath)]
-                  [stat (ftp-obj-stat spath)])
-             (if (and stat (ftp-dir-execute-ok? (simplify-ftp-path spath 1)))
-                 (let ([gid (if (regexp-match? #rx"^[0-9]+$" group)
-                                (let ([gid (string->number group)])
-                                  (and (>= gid 0)
-                                       (<= gid #xffffffff)
-                                       gid))
-                                (gname->gid group))])
-                   (if (and gid
-                            (or (grpmember? gid (ftp-user-uid *userstruct*))
-                                (grpmember? root-gid (ftp-user-uid *userstruct*))))
-                       (begin
-                         (ftp-chown full-path (Stat-uid stat) gid)
-                         (print-log-event (format "Change the group of a ~a" 
-                                                  (simplify-ftp-path spath)))
-                         (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHGRP"))
-                       (print-crlf/encoding** 'PERM-DENIED)))
-                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))))]
+         (define (chgrp group ftp-path)
+           (let ([gid (if (regexp-match? #rx"^[0-9]+$" group)
+                          (let ([gid (string->number group)])
+                            (and (>= gid 0)
+                                 (< gid #xffffffff)
+                                 gid))
+                          (gname->gid group))])
+             (if gid
+                 (with-handlers ([exn:posix? (λ (e)
+                                               (case (exn:posix-errno e)
+                                                 [(1 13) (print-crlf/encoding** 'PERM-DENIED)]
+                                                 [(2 20) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
+                                                 [else (print-crlf/encoding** 'CMD-FAILED 550 "SITE CHGRP")]))])
+                   (ftp-chown* *userstruct* (string-append *root-dir* ftp-path) #xffffffff gid)
+                   (print-log-event (format "Change the group of a ~a" 
+                                            (simplify-ftp-path ftp-path)))
+                   (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "SITE CHGRP"))
+                 (print-crlf/encoding** 'PERM-DENIED))))]
         
         (if params
-            (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
-              (case cmd
-                [(CHMOD)
-                 (let* ([permis+path (get-params params)]
-                        [permis (regexp-match #rx"^[0-7]?[0-7][0-7][0-7]" permis+path)])
-                   (if permis
-                       (let ([path (get-params permis+path)])
-                         (if path
-                             (chmod (string->number (car permis) 8) path)
-                             (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))
-                       (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))]
-                [(CHOWN)
-                 (let* ([owner+path (get-params params)]
-                        [owner (regexp-match #rx"[^ ]+" owner+path)])
-                   (if owner
-                       (let ([path (get-params owner+path)])
-                         (if path
-                             (chown (car owner) path)
-                             (print-crlf/encoding** 'SYNTAX-ERROR "CHOWN:")))
-                       (print-crlf/encoding** 'SYNTAX-ERROR "CHOWN:")))]
-                [(CHGRP)
-                 (let* ([group+path (get-params params)]
-                        [group (regexp-match #rx"[^ ]+" group+path)])
-                   (if group
-                       (let ([path (get-params group+path)])
-                         (if path
-                             (chgrp (car group) path)
-                             (print-crlf/encoding** 'SYNTAX-ERROR "CHGRP:")))
-                       (print-crlf/encoding** 'SYNTAX-ERROR "CHGRP:")))]
-                (else (print-crlf/encoding** 'MISSING-PARAMS))))
+            (if current-user-store&append-ok?
+                (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
+                  (case cmd
+                    [(CHMOD)
+                     (let* ([permis+path (get-params params)]
+                            [permis (regexp-match #rx"^[0-7]?[0-7][0-7][0-7]" permis+path)])
+                       (if permis
+                           (let ([path (get-params permis+path)])
+                             (if path
+                                 (chmod (string->number (car permis) 8) (build-ftp-spath* path))
+                                 (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))
+                           (print-crlf/encoding** 'SYNTAX-ERROR "CHMOD:")))]
+                    [(CHOWN)
+                     (let* ([owner+path (get-params params)]
+                            [owner (regexp-match #rx"[^ ]+" owner+path)])
+                       (if owner
+                           (let ([path (get-params owner+path)])
+                             (if path
+                                 (chown (car owner) (build-ftp-spath* path))
+                                 (print-crlf/encoding** 'SYNTAX-ERROR "CHOWN:")))
+                           (print-crlf/encoding** 'SYNTAX-ERROR "CHOWN:")))]
+                    [(CHGRP)
+                     (let* ([group+path (get-params params)]
+                            [group (regexp-match #rx"[^ ]+" group+path)])
+                       (if group
+                           (let ([path (get-params group+path)])
+                             (if path
+                                 (chgrp (car group) (build-ftp-spath* path))
+                                 (print-crlf/encoding** 'SYNTAX-ERROR "CHGRP:")))
+                           (print-crlf/encoding** 'SYNTAX-ERROR "CHGRP:")))]
+                    (else (print-crlf/encoding** 'MISSING-PARAMS))))
+                (print-crlf/encoding** 'PERM-DENIED))
             (print-crlf/encoding** 'SYNTAX-ERROR ""))))
     
     (define-syntax (passive-host stx)
@@ -1652,13 +1636,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              (ftp-permissions-l? (ftp-user-ftp-perm *userstruct*)))
            (ftp-dir-read-ok? ftp-spath)))
     
-    (define-syntax-rule (ftp-dir-mkdir-ok? ftp-spath)
-      (and (when (ftp-user-ftp-perm *userstruct*)
-             (ftp-permissions-m? (ftp-user-ftp-perm *userstruct*)))
-           (ftp-dir-write-ok? ftp-spath)))
-    
-    (define-syntax-rule (ftp-dir-delete-ok? ftp-spath)
-      (and current-user-delete-ok? (ftp-dir-write-ok? ftp-spath)))
+    (define-syntax (current-user-mkdir-ok? stx)
+      #'(when (ftp-user-ftp-perm *userstruct*)
+          (ftp-permissions-m? (ftp-user-ftp-perm *userstruct*))))
     
     (define-syntax (current-user-store&append-ok? stx)
       #'(when (ftp-user-ftp-perm *userstruct*)
@@ -1745,7 +1725,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              [name (if (string=? "/" ftp-path) "/" (path->string (file-name-from-path ftp-path)))]
              [stat (ftp-lstat path)]
              [mode (Stat-mode stat)]
-             [owner (uid->login (Stat-uid stat))]
+             [owner (uid->uname (Stat-uid stat))]
              [group (gid->gname (Stat-gid stat))]
              [file? (bitwise-bit-set? mode 15)]
              [parent-mode (and parent-stat (Stat-mode parent-stat))]

@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd v1.0.1
+ProRFTPd v1.0.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -61,7 +61,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "ProRFTPd v1.0.1 <development>"]
+    (init-field [server-name&version        "ProRFTPd v1.0.2 <development>"]
                 [copyright                  "Copyright (c) 2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -85,7 +85,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define bad-admin-auth (cons 0 0)) ; (cons attempts time) 
     (define ftp-servers-params (make-hash))
     (define ftp-servers #f)
-    (define control-admin (uid->login (get-uid)))
+    (define control-admin (uid->uname (get-uid)))
     ;;
     ;; ---------- Public Methods ----------
     ;;
