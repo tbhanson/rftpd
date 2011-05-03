@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Library v1.0.6
+ProRFTPd Library v1.0.7
 ----------------------------------------------------------------------
 
 Summary:
@@ -543,7 +543,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define *locale-encoding* default-locale-encoding)
     (define *login* #f)
     (define *userstruct* #f)
-    (define *client-struct* #f)
     (define *root-dir* default-root-dir)
     (define *current-dir* "/")
     (define *rename-path* #f)
@@ -645,8 +644,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (begin
             (print-crlf/encoding** 'SYNTAX-ERROR "")
             (set! *login* #f)))
-      (set! *userstruct* #f)
-      (set! *client-struct* #f))
+      (set! *userstruct* #f))
     
     (define (PASS-COMMAND params)
       (sleep pass-sleep-sec)
@@ -668,7 +666,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                       'login-incorrect)
                      ((not pass)
                       'login-incorrect)
-                     ((check-user-pass *login* pass)
+                     ((check-user-pass (ftp-user-real-user (userinfo/login users-table *login*)) pass)
                       (when (hash-ref bad-auth-table *login* #f)
                         (hash-remove! bad-auth-table *login*))
                       'user-logged-in)
@@ -686,12 +684,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (if (directory-exists? *root-dir*)
                (begin
                  (set! *userstruct* (userinfo/login users-table *login*))
-                 (set! *client-struct* (ftp-client *client-host* *userstruct* users-table))
                  (print-log-event "User logged in.")
                  (print-crlf/encoding** 'USER-LOGGED *login*))
                (begin
                  (set! *userstruct* #f)
-                 (set! *client-struct* #f)
                  (print-log-event "Users-config file incorrect.")
                  (print-crlf/encoding** 'LOGIN-INCORRECT)))]
           [(anonymous-logged-in)
@@ -699,22 +695,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (if (directory-exists? *root-dir*)
                (begin
                  (set! *userstruct* (userinfo/login users-table *login*))
-                 (set! *client-struct* (ftp-client *client-host* *userstruct* users-table))
                  (print-log-event "Anonymous user logged in.")
                  (print-crlf/encoding** 'ANONYMOUS-LOGGED))
                (begin
                  (set! *userstruct* #f)
-                 (set! *client-struct* #f)
                  (print-log-event "Users-config file incorrect.")
                  (print-crlf/encoding** 'LOGIN-INCORRECT)))]
           [(login-incorrect)
            (set! *userstruct* #f)
-           (set! *client-struct* #f)
            (print-log-event "Login incorrect.")
            (print-crlf/encoding** 'LOGIN-INCORRECT)]
           [(passw-incorrect)
            (set! *userstruct* #f)
-           (set! *client-struct* #f)
            (print-log-event "Password incorrect.")
            (print-crlf/encoding** 'LOGIN-INCORRECT)])))
     
@@ -724,7 +716,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (begin
             (set! *login* #f)
             (set! *userstruct* #f)
-            (set! *client-struct* #f)
             (print-crlf/encoding** 'SERVICE-READY))))
     
     (define (QUIT-COMMAND params)
@@ -1237,7 +1228,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                     [(39) (print-crlf/encoding** 'DELDIR-NOT-EMPTY)]
                                                     [(20 2) (print-crlf/encoding** 'DIR-NOT-FOUND)]
                                                     [else (print-crlf/encoding** 'CANT-RMDIR)]))])
-                      (ftp-rmdir *userstruct* full-spath)
+                      (ftp-rmdir* *userstruct* full-spath)
                       (print-log-event (format "Remove a directory ~a" (simplify-ftp-path spath)))
                       (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RMD"))))
               (print-crlf/encoding** 'DELDIR-PERM-DENIED))
@@ -1298,39 +1289,48 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (DELE-COMMAND params)
       (if params
           (if current-user-delete-ok?
-              (let* ([spath (build-ftp-spath* params)]
-                     [full-spath (string-append *root-dir* spath)])
-                (if (file-exists? full-spath)
-                    (if (ftp-access-ok? (simplify-ftp-path spath 1) 3)
-                        (begin
-                          (delete-file full-spath)
-                          (print-log-event (format "Delete a file ~a" (simplify-ftp-path spath)))
-                          (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "DELE"))
-                        (print-crlf/encoding** 'DELFILE-PERM-DENIED))
-                    (print-crlf/encoding** 'FILE-NOT-FOUND)))
+              (with-handlers ([exn:posix? (λ (e)
+                                            (case (exn:posix-errno e)
+                                              [(1 13) (print-crlf/encoding** 'DELFILE-PERM-DENIED)]
+                                              [(2 20 21) (print-crlf/encoding** 'FILE-NOT-FOUND)]
+                                              [else (print-crlf/encoding** 'CMD-FAILED 550 "DELE")]))])
+                (let ([spath (build-ftp-spath* params)])
+                  (ftp-unlink* *userstruct* (string-append *root-dir* spath))
+                  (print-log-event (format "Delete a file ~a" (simplify-ftp-path spath)))
+                  (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "DELE")))
               (print-crlf/encoding** 'DELFILE-PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (SIZE-COMMAND params)
       (if params
-          (let* ([spath (build-ftp-spath* params)]
-                 [full-path (string-append *root-dir* spath)])
-            (if (and (file-exists? full-path)
-                     (ftp-dir-execute-ok? (path->string (path-only spath))))
-                (print-crlf/encoding* (format "213 ~a" (file-size full-path)))
-                (print-crlf/encoding** 'FILE-NOT-FOUND)))
+          (if current-user-list-ok?
+              (with-handlers ([exn:posix? (λ (e)
+                                            (case (exn:posix-errno e)
+                                              [(13) (print-crlf/encoding** 'PERM-DENIED)]
+                                              [(2 20) (print-crlf/encoding** 'FILE-NOT-FOUND)]
+                                              [else (print-crlf/encoding** 'CMD-FAILED 550 "SIZE")]))])
+                (let* ([spath (build-ftp-spath* params)]
+                       [stat (ftp-stat* *userstruct* (string-append *root-dir* spath))])
+                  (if (= (bitwise-and (Stat-mode stat) 57344) 32768)
+                      (print-crlf/encoding* (format "213 ~a" (Stat-size stat)))
+                      (print-crlf/encoding** 'FILE-NOT-FOUND))))
+              (print-crlf/encoding** 'PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (MDTM-COMMAND params)
       (if params
-          (let* ([spath (build-ftp-spath* params)]
-                 [full-path (string-append *root-dir* spath)])
-            (if (and (file-exists? full-path)
-                     (ftp-dir-execute-ok? (path->string (path-only spath))))
-                (print-crlf/encoding* (format "213 ~a"
-                                              (seconds->mdtm-time-format
-                                               (file-or-directory-modify-seconds full-path))))
-                (print-crlf/encoding** 'FILE-NOT-FOUND)))
+          (if current-user-list-ok?
+              (with-handlers ([exn:posix? (λ (e)
+                                            (case (exn:posix-errno e)
+                                              [(13) (print-crlf/encoding** 'PERM-DENIED)]
+                                              [(2 20) (print-crlf/encoding** 'FILE-NOT-FOUND)]
+                                              [else (print-crlf/encoding** 'CMD-FAILED 550 "MDTM")]))])
+                (let* ([spath (build-ftp-spath* params)]
+                       [stat (ftp-stat* *userstruct* (string-append *root-dir* spath))])
+                  (if (= (bitwise-and (Stat-mode stat) 57344) 32768)
+                      (print-crlf/encoding* (format "213 ~a" (seconds->mdtm-time-format (Stat-mtime stat))))
+                      (print-crlf/encoding** 'FILE-NOT-FOUND))))
+              (print-crlf/encoding** 'PERM-DENIED))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (RNFR-COMMAND params)
@@ -1387,7 +1387,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                     [(1 13) (print-crlf/encoding** 'PERM-DENIED)]
                                                     [(2) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
                                                     [else (print-crlf/encoding** 'CANT-MFMT)]))])
-                      (ftp-utime *userstruct* (string-append *root-dir* ftp-path) modtime modtime)
+                      (ftp-utime* *userstruct* (string-append *root-dir* ftp-path) modtime modtime)
                       (print-log-event (format "Modify a last modification time of ~s in ~a"
                                                (simplify-ftp-path ftp-path) mt))
                       (print-crlf/encoding** 'MFMT-OK mt (simplify-ftp-path ftp-path)))
@@ -1407,7 +1407,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                          [(2) (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)]
                                                          [else (print-crlf/encoding** 'CMD-FAILED 550 "MFF")])
                                                        (return))])
-                           (ftp-utime *userstruct* (string-append *root-dir* ftp-path) modtime modtime)
+                           (ftp-utime* *userstruct* (string-append *root-dir* ftp-path) modtime modtime)
                            (print-log-event (format "Modify a last modification time of ~s in ~a"
                                                     (simplify-ftp-path ftp-path) mt)))
                          (return (print-crlf/encoding** 'SYNTAX-ERROR "MODIFY:")))))
@@ -1616,25 +1616,27 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax-rule (build-ftp-spath* ftp-spath ...)
       (build-ftp-spath *current-dir* ftp-spath ...))
     
-    (define-syntax-rule (ftp-access-ok? ftp-spath perm)
-      (ftp-access (string-append *root-dir* ftp-spath) (ftp-user-uid *userstruct*) (ftp-user-gid *userstruct*) perm))
+    (define-syntax-rule (ftp-access-ok? ftp-spath mode)
+      (ftp-access* *userstruct* (string-append *root-dir* ftp-spath) mode))
     
     (define-syntax-rule (ftp-dir-execute-ok? ftp-spath)
       (and (directory-exists? (string-append *root-dir* ftp-spath))
-           (ftp-access (string-append *root-dir* ftp-spath) (ftp-user-uid *userstruct*) (ftp-user-gid *userstruct*) 1)))
+           (ftp-access-ok? ftp-spath 1)))
     
     (define-syntax-rule (ftp-dir-read-ok? ftp-spath)
       (and (directory-exists? (string-append *root-dir* ftp-spath))
-           (ftp-access (string-append *root-dir* ftp-spath) (ftp-user-uid *userstruct*) (ftp-user-gid *userstruct*) 5)))
+           (ftp-access-ok? ftp-spath 5)))
     
     (define-syntax-rule (ftp-dir-write-ok? ftp-spath)
       (and (directory-exists? (string-append *root-dir* ftp-spath))
-           (ftp-access (string-append *root-dir* ftp-spath) (ftp-user-uid *userstruct*) (ftp-user-gid *userstruct*) 3)))
+           (ftp-access-ok? ftp-spath 3)))
     
     (define-syntax-rule (ftp-dir-list-ok? ftp-spath)
-      (and (when (ftp-user-ftp-perm *userstruct*)
-             (ftp-permissions-l? (ftp-user-ftp-perm *userstruct*)))
-           (ftp-dir-read-ok? ftp-spath)))
+      (and current-user-list-ok? (ftp-dir-read-ok? ftp-spath)))
+    
+    (define-syntax (current-user-list-ok? stx)
+      #'(when (ftp-user-ftp-perm *userstruct*)
+          (ftp-permissions-l? (ftp-user-ftp-perm *userstruct*))))
     
     (define-syntax (current-user-mkdir-ok? stx)
       #'(when (ftp-user-ftp-perm *userstruct*)
@@ -1925,7 +1927,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [default-root-dir        path-string?]
                        [default-locale-encoding string?]
                        [log-file                path/c])
-           [useradd (not-null-string/c boolean? ftp-perm/c path/c . ->m . void?)])
+           [useradd (not-null-string/c not-null-string/c boolean? ftp-perm/c path/c . ->m . void?)])
   
   (class (ftp-utils% object%)
     (super-new)
@@ -1959,7 +1961,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Private Definitions ----------
     ;;
-    (define users-table (make-users))
+    (define users-table (make-users-table))
     (define clients-table (make-hash))
     (define state 'stopped)
     (define server-custodian #f)
@@ -1968,8 +1970,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (useradd login anonymous? [ftp-perm #f] [root-dir "/"])
-      (ftp-useradd users-table login anonymous? ftp-perm root-dir))
+    (define/public (useradd login real-user anonymous? [ftp-perm #f] [root-dir "/"])
+      (ftp-useradd users-table login real-user anonymous? ftp-perm root-dir))
     
     (define/public (clear-users-table)
       (clear-users-info users-table))

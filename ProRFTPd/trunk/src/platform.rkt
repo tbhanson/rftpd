@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Platform Library v1.2
+ProRFTPd Platform Library v1.3
 ----------------------------------------------------------------------
 
 Summary:
@@ -137,6 +137,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (def-libc mkdir (_string mode_t -> _int))
 (def-libc rmdir (_string -> _int))
+
+(def-libc unlink (_string -> _int))
 
 (def-libc getgrgid (gid_t -> (_or-null _Group-pointer)))
 (def-libc getgrnam (_string -> (_or-null _Group-pointer)))

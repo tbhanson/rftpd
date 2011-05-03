@@ -1,7 +1,7 @@
 (ftp-server-users
-;   Login     | Anonymous? | FTP/Perm |      Root Dir
-  ["root"           #f          #f     "/"]
-  ["misha"          #f          #f     #f]
-  ;["ftp"            #t          lr     #f]
-  ;["anonymous"      #t          lr     "/home/ftp"]
+;   Login     | Real User | Anonymous? | FTP/Perm |      Root Dir
+  ["root"        "root"        #f          #f        "/"]
+  ["user"        "misha"       #f          #f        #f]
+  ;["ftp"          "ftp"        #t          lr        #f]
+  ;["anonymous"    "ftp"        #t          lr        #f]
 )

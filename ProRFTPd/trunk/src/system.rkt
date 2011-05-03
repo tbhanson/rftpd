@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd System Library v1.1
+ProRFTPd System Library v1.3
 ----------------------------------------------------------------------
 
 Summary:
@@ -37,9 +37,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (provide/contract
  [crypt-string (string? string? . -> . string?)])
 
-(struct ftp-user (login anonymous? uid gid ftp-perm root-dir))
-(struct ftp-users (users/login users/uid) #:mutable)
-(struct ftp-client (ip [userStruct #:mutable] users))
+(struct ftp-user (login real-user anonymous? uid gid ftp-perm root-dir))
+(struct ftp-users (logins uids) #:mutable)
 (struct ftp-permissions (l? r? a? c? m? f? d?))
 
 (struct exn:posix exn (id errno) #:transparent)
@@ -49,7 +48,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (define chids/sem (make-semaphore 1))
 
-(define (make-users)
+(define (make-users-table)
   (ftp-users (make-hash) (make-hash)))
 
 (define-syntax-rule (throw-errno* fun errno)
@@ -58,14 +57,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define-syntax-rule (throw-errno fun) (throw-errno* fun (ffi:saved-errno)))
 
 (define (clear-users-info users)
-  (set-ftp-users-users/login! users (make-hash))
-  (set-ftp-users-users/uid! users (make-hash)))
+  (set-ftp-users-logins! users (make-hash))
+  (set-ftp-users-uids! users (make-hash)))
 
 (define (userinfo/login users login)
-  (hash-ref (ftp-users-users/login users) login #f))
+  (hash-ref (ftp-users-logins users) login #f))
 
 (define (userinfo/uid users uid)
-  (hash-ref (ftp-users-users/uid users) uid #f))
+  (hash-ref (ftp-users-uids users) uid #f))
 
 (define (make-ftp-permissions perm)
   (let-values ([(l? r? a? c? m? f? d?) (values #f #f #f #f #f #f #f)]
@@ -85,18 +84,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          correct?
          (ftp-permissions l? r? a? c? m? f? d?))))
 
-(define (ftp-useradd users login anonymous? [ftp-perm #f] [root-dir "/"])
+(define (ftp-useradd users login real-user anonymous? [ftp-perm #f] [root-dir "/"])
   (let ([root-dir (and root-dir (delete-lrws root-dir))]
-        [passwdStruct (getpwnam login)])
+        [passwdStruct (getpwnam real-user)])
     (if passwdStruct
         (let ([user (ftp-user login
+                              real-user
                               anonymous?
                               (Passwd-uid passwdStruct) 
                               (Passwd-gid passwdStruct) 
                               (make-ftp-permissions ftp-perm)
                               (or root-dir (Passwd-home passwdStruct)))])
-          (hash-set! (ftp-users-users/login users) login user)
-          (hash-set! (ftp-users-users/uid users) (Passwd-uid passwdStruct) user)
+          (hash-set! (ftp-users-logins users) login user)
+          (hash-set! (ftp-users-uids users) (Passwd-uid passwdStruct) user)
           (and root-dir
                (unless (directory-exists? root-dir)
                  (ftp-mkdir root-dir 
@@ -132,9 +132,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (unless (zero? (daemon (if nochdir -1 0) (if noclose -1 0)))
     (throw-errno daemon)))
 
-(define (get-uid)
-  (getuid))
-
 (define (set!-euid&egid euid egid)
   (unless (zero? (seteuid euid))
     (throw-errno seteuid))
@@ -147,9 +144,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (unless (zero? (seteuid euid))
     (throw-errno seteuid)))
 
-(define (ftp-chmod spath mode)
-  (unless (zero? (chmod spath mode))
-    (throw-errno chmod)))
+;(define (ftp-chmod spath mode)
+;  (unless (zero? (chmod spath mode))
+;    (throw-errno chmod)))
 
 (define (ftp-chown spath uid gid)
   (unless (zero? (chown spath uid gid))
@@ -165,7 +162,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (semaphore-post chids/sem)
     (when errno (throw-errno* mkdir errno))))
 
-(define (ftp-utime userstruct spath actime modtime)
+(define (ftp-utime* userstruct spath actime modtime)
   (let ([utimbuf (make-Utimbuf actime modtime)]
         [errno #f])
     (semaphore-wait chids/sem)
@@ -176,7 +173,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (semaphore-post chids/sem)
     (when errno (throw-errno* utime errno))))
 
-(define (ftp-rmdir userstruct spath)
+(define (ftp-rmdir* userstruct spath)
   (let ([errno #f])
     (semaphore-wait chids/sem)
     (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
@@ -185,6 +182,16 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (set!-euid&egid (getuid) (getgid))
     (semaphore-post chids/sem)
     (when errno (throw-errno* rmdir errno))))
+
+(define (ftp-unlink* userstruct spath)
+  (let ([errno #f])
+    (semaphore-wait chids/sem)
+    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (unless (zero? (unlink spath))
+      (set! errno (ffi:saved-errno)))
+    (set!-euid&egid (getuid) (getgid))
+    (semaphore-post chids/sem)
+    (when errno (throw-errno* unlink errno))))
 
 (define (ftp-chmod* userstruct spath mode)
   (let ([errno #f])
@@ -206,14 +213,26 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (semaphore-post chids/sem)
     (when errno (throw-errno* chmod errno))))
 
-(define (ftp-access spath uid gid mode)
+(define (ftp-access* userstruct spath mode)
   (let ([result #f])
     (semaphore-wait chids/sem)
-    (set!-egid&euid gid uid)
+    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
     (set! result (zero? (eaccess spath mode)))
     (set!-euid&egid (getuid) (getgid))
     (semaphore-post chids/sem)
     result))
+
+(define (ftp-stat* userstruct spath)
+  (let ([st (make-Stat 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)]
+        [errno #f])
+    (semaphore-wait chids/sem)
+    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (unless (zero? (__xstat STAT-VER-LINUX spath st))
+      (set! errno (ffi:saved-errno)))
+    (set!-euid&egid (getuid) (getgid))
+    (semaphore-post chids/sem)
+    (when errno (throw-errno* stat errno))
+    st))
 
 (define (get-shadow-passwd login)
   (let ([spwd (getspnam login)])

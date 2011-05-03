@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd v1.0.2
+ProRFTPd v1.0.3
 ----------------------------------------------------------------------
 
 Summary:
@@ -32,6 +32,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (file "lib-ssl.rkt")
          (file "utils.rkt")
          (file "system.rkt")
+         (file "platform.rkt")
          (prefix-in ftp: (file "lib-prorftpd.rkt")))
 
 (struct ftp-srv-params
@@ -61,7 +62,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "ProRFTPd v1.0.2 <development>"]
+    (init-field [server-name&version        "ProRFTPd v1.0.3 <development>"]
                 [copyright                  "Copyright (c) 2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -85,7 +86,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define bad-admin-auth (cons 0 0)) ; (cons attempts time) 
     (define ftp-servers-params (make-hash))
     (define ftp-servers #f)
-    (define control-admin (uid->uname (get-uid)))
+    (define control-admin (uid->uname (getuid)))
     ;;
     ;; ---------- Public Methods ----------
     ;;
@@ -476,7 +477,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
               (when (eq? (car conf) 'ftp-server-users)
                 (for-each (λ (user)
                             (send server useradd
-                                  (car user) (second user) (third user) (fourth user)))
+                                  (car user) (second user) (third user) (fourth user) (fifth user)))
                           (cdr conf))))))))
     
     (define/private (format-welcome-msg msg)
