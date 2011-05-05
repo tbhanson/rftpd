@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Library v1.0.7
+ProRFTPd Library v1.0.8
 ----------------------------------------------------------------------
 
 Summary:
@@ -1236,7 +1236,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (APPE-COMMAND params)
       (if params
-          (if current-user-store&append-ok?
+          (if current-user-append-ok?
               (let* ([spath (build-ftp-spath* params)]
                      [full-spath (string-append *root-dir* spath)])
                 (if (file-exists? full-spath)
@@ -1249,7 +1249,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (STOR-COMMAND params)
       (if params
-          (if current-user-store&append-ok?
+          (if current-user-store-ok?
               (let* ([spath (build-ftp-spath* params)]
                      [full-spath (string-append *root-dir* spath)]
                      [parent (simplify-ftp-path spath 1)])
@@ -1376,7 +1376,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (MFMT-COMMAND params)
       (if (and params (regexp-match? #rx"^[0-9]+[ ]+.+" params))
-          (if current-user-store&append-ok?
+          (if current-user-store-ok?
               (let* ([mt (car (regexp-match #rx"[0-9]+" params))]
                      [modtime (mdtm-time-format->seconds mt)]
                      [ftp-path (let ([p (get-params params)])
@@ -1465,7 +1465,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  [unix-owner #f]
                  [unix-group #f])
              (if (and params (regexp-match? #rx"^([A-z\\.]+=[^ \t]+;)+[ ]+.+" params))
-                 (if current-user-store&append-ok?
+                 (if current-user-store-ok?
                      (let* ([lst (string-split-char #\; params)]
                             [path (delete-lws (last lst))]
                             [facts (remove (last lst) lst)])
@@ -1558,7 +1558,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (print-crlf/encoding** 'PERM-DENIED))))]
         
         (if params
-            (if current-user-store&append-ok?
+            (if current-user-store-ok?
                 (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
                   (case cmd
                     [(CHMOD)
@@ -1634,6 +1634,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax-rule (ftp-dir-list-ok? ftp-spath)
       (and current-user-list-ok? (ftp-dir-read-ok? ftp-spath)))
     
+    (define-syntax (current-user-read-ok? stx)
+      #'(when (ftp-user-ftp-perm *userstruct*)
+          (ftp-permissions-r? (ftp-user-ftp-perm *userstruct*))))
+    
     (define-syntax (current-user-list-ok? stx)
       #'(when (ftp-user-ftp-perm *userstruct*)
           (ftp-permissions-l? (ftp-user-ftp-perm *userstruct*))))
@@ -1642,9 +1646,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       #'(when (ftp-user-ftp-perm *userstruct*)
           (ftp-permissions-m? (ftp-user-ftp-perm *userstruct*))))
     
-    (define-syntax (current-user-store&append-ok? stx)
+    (define-syntax (current-user-store-ok? stx)
       #'(when (ftp-user-ftp-perm *userstruct*)
           (ftp-permissions-c? (ftp-user-ftp-perm *userstruct*))))
+    
+    (define-syntax (current-user-append-ok? stx)
+      #'(when (ftp-user-ftp-perm *userstruct*)
+          (ftp-permissions-a? (ftp-user-ftp-perm *userstruct*))))
     
     (define-syntax (current-user-delete-ok? stx)
       #'(when (ftp-user-ftp-perm *userstruct*)
@@ -1655,7 +1663,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
           (ftp-permissions-f? (ftp-user-ftp-perm *userstruct*))))
     
     (define-syntax-rule (ftp-dir-store-ok? ftp-spath)
-      (and current-user-store&append-ok? (ftp-dir-write-ok? ftp-spath)))
+      (and current-user-store-ok? (ftp-dir-write-ok? ftp-spath)))
     
     (define-syntax-rule (deltail/ spath)
       (if (eq? (string-ref spath (sub1 (string-length spath))) #\/)
@@ -1780,40 +1788,31 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                    (bitwise-bit-set? mode (- i 2)))
                                               "e" "")
                                           (if file?
-                                              (if (and (if (ftp-user-ftp-perm user)
-                                                           (ftp-permissions-r? (ftp-user-ftp-perm user))
-                                                           #t)
+                                              (if (and current-user-read-ok?
                                                        (bitwise-bit-set? mode i))
                                                   "r" "")
-                                              (if (and (if (ftp-user-ftp-perm user)
-                                                           (ftp-permissions-l? (ftp-user-ftp-perm user))
-                                                           #t)
+                                              (if (and current-user-list-ok?
                                                        (bitwise-bit-set? mode i))
                                                   "l" ""))
                                           (if file?
-                                              (if (and (if (ftp-user-ftp-perm user)
-                                                           (ftp-permissions-a? (ftp-user-ftp-perm user))
-                                                           #t)
+                                              (if (and current-user-append-ok?
                                                        (bitwise-bit-set? mode (sub1 i)))
                                                   "a" "")
-                                              (if (and (if (ftp-user-ftp-perm user)
-                                                           (ftp-permissions-c? (ftp-user-ftp-perm user))
-                                                           #t)
+                                              (if (and current-user-store-ok?
                                                        (bitwise-bit-set? mode (sub1 i)))
                                                   "c" ""))
+                                          (if (and (not file?)
+                                                   current-user-mkdir-ok?
+                                                   (bitwise-bit-set? mode (sub1 i)))
+                                              "m" "")
                                           (if (and parent-stat
                                                    (bitwise-bit-set? parent-mode (sub1 p)))
                                               (string-append
-                                               (if (and file? 
-                                                        (if (ftp-user-ftp-perm user)
-                                                            (ftp-permissions-c? (ftp-user-ftp-perm user))
-                                                            #t))
+                                               (if (and file? current-user-store-ok?)
                                                    "w" "")
-                                               (if (or (not (ftp-user-ftp-perm user))
-                                                       (ftp-permissions-f? (ftp-user-ftp-perm user)))
+                                               (if current-user-rename-ok?
                                                    "f" "")
-                                               (if (or (not (ftp-user-ftp-perm user))
-                                                       (ftp-permissions-d? (ftp-user-ftp-perm user)))
+                                               (if current-user-delete-ok?
                                                    "d" ""))
                                               "")))))
                            "")

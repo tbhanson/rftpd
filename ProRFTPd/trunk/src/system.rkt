@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd System Library v1.3
+ProRFTPd System Library v1.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -294,3 +294,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (and (ffi:ptr-ref *mem ffi:_string offs)
                       (or (string=? (ffi:ptr-ref *mem ffi:_string offs) uname)
                           (loop (add1 offs))))))))))
+
+(define (stat->user-mode* userstruct stat)
+  (cond
+    [(= (ftp-user-uid userstruct) (Stat-uid stat))
+     (arithmetic-shift (bitwise-and (Stat-mode stat) #o700) -6)]
+    [(grpmember? (Stat-gid stat) (ftp-user-uid userstruct))
+     (arithmetic-shift (bitwise-and (Stat-mode stat) #o70) -3)]
+    [else (bitwise-and (Stat-mode stat) 7)]))
+
+(define (stat->user-mode** userstruct stat)
+  (cond
+    [(= (ftp-user-uid userstruct) (Stat-uid stat))
+     (arithmetic-shift (bitwise-and (Stat-mode stat) #o700) -6)]
+    [(grpmember? (Stat-gid stat) (ftp-user-uid userstruct))
+     (arithmetic-shift (bitwise-and (Stat-mode stat) #o70) -3)]
+    [(grpmember? root-gid (ftp-user-uid userstruct))
+     (bitwise-ior 6
+                  (arithmetic-shift (bitwise-and (Stat-mode stat) #o700) -6)
+                  (arithmetic-shift (bitwise-and (Stat-mode stat) #o70) -3)
+                  (bitwise-and (Stat-mode stat) 7))]
+    [else (bitwise-and (Stat-mode stat) 7)]))
