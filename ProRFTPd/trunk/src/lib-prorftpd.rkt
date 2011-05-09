@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Library v1.0.8
+ProRFTPd Library v1.0.9
 ----------------------------------------------------------------------
 
 Summary:
@@ -1352,31 +1352,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define (RNTO-COMMAND params)
       (if params
-          (if (and current-user-rename-ok? *rename-path*)
-              (let* ([new-path (let ([p (build-ftp-spath* params)]) (deltail/ p))]
-                     [parent-new (and (path-string? new-path)
-                                      (path->string (path-only new-path)))])
-                (if (and parent-new 
-                         (ftp-stat (string-append *root-dir* parent-new)))
-                    (if (ftp-access-ok? parent-new 3)
-                        (if (ftp-stat (string-append *root-dir* new-path))
-                            (print-crlf/encoding** 'CANT-RENAME-EXIST)
-                            (with-handlers ([exn:fail:filesystem?
-                                             (λ (e) (print-crlf/encoding** 'CANT-RENAME))])
-                              (rename-file-or-directory *rename-path* (string-append *root-dir* new-path))
-                              (print-log-event (format "Rename the file or directory from ~a to ~a"
-                                                       (real-path->ftp-path *rename-path* *root-dir*)
-                                                       (simplify-ftp-path new-path)))
-                              (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RNTO")))
-                        (print-crlf/encoding** 'RENAME-PERM-DENIED))
-                    (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))
-                (set! *rename-path* #f))
-              (print-crlf/encoding** 'RENAME-PERM-DENIED))
+          (if *rename-path*
+              (if current-user-rename-ok?
+                  (let* ([new-path (let ([p (build-ftp-spath* params)]) (deltail/ p))]
+                         [parent-new (and (path-string? new-path)
+                                          (path->string (path-only new-path)))])
+                    (if (and parent-new 
+                             (ftp-stat (string-append *root-dir* parent-new)))
+                        (if (ftp-access-ok? parent-new 3)
+                            (if (ftp-stat (string-append *root-dir* new-path))
+                                (print-crlf/encoding** 'CANT-RENAME-EXIST)
+                                (with-handlers ([exn:fail:filesystem?
+                                                 (λ (e) (print-crlf/encoding** 'CANT-RENAME))])
+                                  (rename-file-or-directory *rename-path* (string-append *root-dir* new-path))
+                                  (print-log-event (format "Rename the file or directory from ~a to ~a"
+                                                           (real-path->ftp-path *rename-path* *root-dir*)
+                                                           (simplify-ftp-path new-path)))
+                                  (print-crlf/encoding** 'CMD-SUCCESSFUL 250 "RNTO")))
+                            (print-crlf/encoding** 'RENAME-PERM-DENIED))
+                        (print-crlf/encoding** 'FILE-DIR-NOT-FOUND))
+                    (set! *rename-path* #f))
+                  (print-crlf/encoding** 'RENAME-PERM-DENIED))
+              (print-crlf/encoding** 'CMD-BAD-SEQ))
           (print-crlf/encoding** 'SYNTAX-ERROR "")))
     
     (define (MFMT-COMMAND params)
       (if (and params (regexp-match? #rx"^[0-9]+[ ]+.+" params))
-          (if current-user-store-ok?
+          (if (and (not (ftp-user-anonymous? *userstruct*))
+                   current-user-store-ok?)
               (let* ([mt (car (regexp-match #rx"[0-9]+" params))]
                      [modtime (mdtm-time-format->seconds mt)]
                      [ftp-path (let ([p (get-params params)])
@@ -1465,7 +1468,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  [unix-owner #f]
                  [unix-group #f])
              (if (and params (regexp-match? #rx"^([A-z\\.]+=[^ \t]+;)+[ ]+.+" params))
-                 (if current-user-store-ok?
+                 (if (and (not (ftp-user-anonymous? *userstruct*))
+                          current-user-store-ok?)
                      (let* ([lst (string-split-char #\; params)]
                             [path (delete-lws (last lst))]
                             [facts (remove (last lst) lst)])
@@ -1558,7 +1562,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (print-crlf/encoding** 'PERM-DENIED))))]
         
         (if params
-            (if current-user-store-ok?
+            (if (and (not (ftp-user-anonymous? *userstruct*))
+                     current-user-store-ok?)
                 (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
                   (case cmd
                     [(CHMOD)

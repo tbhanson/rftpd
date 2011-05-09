@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd v1.0.3
+ProRFTPd v1.0.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -62,7 +62,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "ProRFTPd v1.0.3 <development>"]
+    (init-field [server-name&version        "ProRFTPd v1.0.4 <development>"]
                 [copyright                  "Copyright (c) 2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -195,34 +195,37 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (hash-for-each
        ftp-servers-params
        (λ (id params)
-         (let ([srv (new ftp:ftp-server%
-                         [welcome-message         (ftp-srv-params-welcome-message params)]
-                         
-                         [server-host             (ftp-srv-params-host params)]
-                         [server-port             (ftp-srv-params-port params)]
-                         [ssl-protocol            (ftp-srv-params-ssl-protocol params)]
-                         [ssl-key                 (ftp-srv-params-ssl-key params)]
-                         [ssl-certificate         (ftp-srv-params-ssl-certificate params)]
-                         
-                         [max-allow-wait          (ftp-srv-params-max-allow-wait params)]
-                         [transfer-wait-time      (ftp-srv-params-transfer-wait-time params)]
-                         [max-clients-per-IP      (ftp-srv-params-max-clients-per-IP params)]
-                         
-                         [bad-auth-sleep-sec      (ftp-srv-params-bad-auth-sleep-sec params)]
-                         [max-auth-attempts       (ftp-srv-params-max-auth-attempts params)]
-                         [pass-sleep-sec          (ftp-srv-params-passwd-sleep-sec params)]
-                         
-                         [disable-ftp-commands    (ftp-srv-params-disable-ftp-commands params)]
-                         
-                         [allow-foreign-address   (ftp-srv-params-allow-foreign-address params)]
-                         
-                         [pasv-host&ports         (ftp-srv-params-passive-host&ports params)]
-                         
-                         [default-root-dir        (ftp-srv-params-default-root-dir params)]
-                         [default-locale-encoding default-locale-encoding]
-                         [log-file                (ftp-srv-params-log-file params)])])
-           (hash-set! ftp-servers id srv)
-           (start! id srv))))
+         (with-handlers ([any/c (λ(e) 
+                                  (unless-drdebug (displayln e))
+                                  (print-error "Please check your settings for the server '~a'." id))])
+           (let ([srv (new ftp:ftp-server%
+                           [welcome-message         (ftp-srv-params-welcome-message params)]
+                           
+                           [server-host             (ftp-srv-params-host params)]
+                           [server-port             (ftp-srv-params-port params)]
+                           [ssl-protocol            (ftp-srv-params-ssl-protocol params)]
+                           [ssl-key                 (ftp-srv-params-ssl-key params)]
+                           [ssl-certificate         (ftp-srv-params-ssl-certificate params)]
+                           
+                           [max-allow-wait          (ftp-srv-params-max-allow-wait params)]
+                           [transfer-wait-time      (ftp-srv-params-transfer-wait-time params)]
+                           [max-clients-per-IP      (ftp-srv-params-max-clients-per-IP params)]
+                           
+                           [bad-auth-sleep-sec      (ftp-srv-params-bad-auth-sleep-sec params)]
+                           [max-auth-attempts       (ftp-srv-params-max-auth-attempts params)]
+                           [pass-sleep-sec          (ftp-srv-params-passwd-sleep-sec params)]
+                           
+                           [disable-ftp-commands    (ftp-srv-params-disable-ftp-commands params)]
+                           
+                           [allow-foreign-address   (ftp-srv-params-allow-foreign-address params)]
+                           
+                           [pasv-host&ports         (ftp-srv-params-passive-host&ports params)]
+                           
+                           [default-root-dir        (ftp-srv-params-default-root-dir params)]
+                           [default-locale-encoding default-locale-encoding]
+                           [log-file                (ftp-srv-params-log-file params)])])
+             (hash-set! ftp-servers id srv)
+             (start! id srv)))))
       (when (positive? (hash-count ftp-servers-params))
         (unless-drdebug
          (unless echo?
@@ -470,7 +473,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  (cdr conf))))))))
     
     (define/private (load-users server users-file)
-      (with-handlers ([any/c debug/handler])
+      (with-handlers ([any/c (λ(e) 
+                               (unless-drdebug (displayln e))
+                               (print-error "Please check your users-config file."))])
         (call-with-input-file users-file
           (λ (in)
             (let ([conf (read in)])
@@ -479,6 +484,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                             (send server useradd
                                   (car user) (second user) (third user) (fourth user) (fifth user)))
                           (cdr conf))))))))
+    
+    (define-syntax-rule (print-error msg v ...)
+      (displayln (format (string-append "ProRFTPd: " msg) v ...))) 
     
     (define/private (format-welcome-msg msg)
       (regexp-replace* #rx"%[Vv]|%[Cc]"

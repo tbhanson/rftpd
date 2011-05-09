@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd System Library v1.4
+ProRFTPd System Library v1.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -32,7 +32,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (provide (except-out (all-defined-out)
                      (struct-out ftp-users)
-                     crypt-string))
+                     crypt-string
+                     change-egid&euid
+                     change*-egid&euid
+                     restore-euid&egid))
 
 (provide/contract
  [crypt-string (string? string? . -> . string?)])
@@ -52,7 +55,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (ftp-users (make-hash) (make-hash)))
 
 (define-syntax-rule (throw-errno* fun errno)
-  (raise (exn:posix (format "~a: errno=~a" 'fun errno) (current-continuation-marks) 'fun errno)))
+  (raise (exn:posix (format "~a: errno=~a" 'fun errno) 
+                    (current-continuation-marks) 
+                    'fun errno)))
 
 (define-syntax-rule (throw-errno fun) (throw-errno* fun (ffi:saved-errno)))
 
@@ -152,85 +157,84 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (unless (zero? (chown spath uid gid))
     (throw-errno chown)))
 
-(define (ftp-mkdir spath [uid root-uid][gid root-gid])
-  (let ([errno #f])
+(define-syntax-rule (change-egid&euid egid euid)
+  (with-handlers ([any/c (λ(e) (exit 1))])
     (semaphore-wait chids/sem)
-    (set!-egid&euid gid uid)
-    (unless (zero? (mkdir spath #o755))
-      (set! errno (ffi:saved-errno)))
+    (set!-egid&euid egid euid)))
+
+(define-syntax-rule (change*-egid&euid userstruct)
+  (with-handlers ([any/c (λ(e) (exit 1))])
+    (semaphore-wait chids/sem)
+    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))))
+
+(define-syntax-rule (restore-euid&egid)
+  (with-handlers ([any/c (λ(e) (exit 1))])
     (set!-euid&egid (getuid) (getgid))
-    (semaphore-post chids/sem)
+    (semaphore-post chids/sem)))
+
+(define (ftp-mkdir spath [uid root-uid][gid root-gid] #:mode [mode #o755])
+  (let ([errno #f])
+    (change-egid&euid gid uid)
+    (unless (zero? (mkdir spath mode))
+      (set! errno (ffi:saved-errno)))
+    (restore-euid&egid)
     (when errno (throw-errno* mkdir errno))))
 
 (define (ftp-utime* userstruct spath actime modtime)
   (let ([utimbuf (make-Utimbuf actime modtime)]
         [errno #f])
-    (semaphore-wait chids/sem)
-    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (change*-egid&euid userstruct)
     (unless (zero? (utime spath utimbuf))
       (set! errno (ffi:saved-errno)))
-    (set!-euid&egid (getuid) (getgid))
-    (semaphore-post chids/sem)
+    (restore-euid&egid)
     (when errno (throw-errno* utime errno))))
 
 (define (ftp-rmdir* userstruct spath)
   (let ([errno #f])
-    (semaphore-wait chids/sem)
-    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (change*-egid&euid userstruct)
     (unless (zero? (rmdir spath))
       (set! errno (ffi:saved-errno)))
-    (set!-euid&egid (getuid) (getgid))
-    (semaphore-post chids/sem)
+    (restore-euid&egid)
     (when errno (throw-errno* rmdir errno))))
 
 (define (ftp-unlink* userstruct spath)
   (let ([errno #f])
-    (semaphore-wait chids/sem)
-    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (change*-egid&euid userstruct)
     (unless (zero? (unlink spath))
       (set! errno (ffi:saved-errno)))
-    (set!-euid&egid (getuid) (getgid))
-    (semaphore-post chids/sem)
+    (restore-euid&egid)
     (when errno (throw-errno* unlink errno))))
 
 (define (ftp-chmod* userstruct spath mode)
   (let ([errno #f])
-    (semaphore-wait chids/sem)
-    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (change*-egid&euid userstruct)
     (unless (zero? (chmod spath mode))
       (set! errno (ffi:saved-errno)))
-    (set!-euid&egid (getuid) (getgid))
-    (semaphore-post chids/sem)
+    (restore-euid&egid)
     (when errno (throw-errno* chmod errno))))
 
 (define (ftp-chown* userstruct spath uid gid)
   (let ([errno #f])
-    (semaphore-wait chids/sem)
-    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (change*-egid&euid userstruct)
     (unless (zero? (chown spath uid gid))
       (set! errno (ffi:saved-errno)))
-    (set!-euid&egid (getuid) (getgid))
-    (semaphore-post chids/sem)
+    (restore-euid&egid)
     (when errno (throw-errno* chmod errno))))
 
 (define (ftp-access* userstruct spath mode)
   (let ([result #f])
-    (semaphore-wait chids/sem)
-    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (change*-egid&euid userstruct)
     (set! result (zero? (eaccess spath mode)))
-    (set!-euid&egid (getuid) (getgid))
-    (semaphore-post chids/sem)
+    (restore-euid&egid)
     result))
 
 (define (ftp-stat* userstruct spath)
   (let ([st (make-Stat 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)]
         [errno #f])
-    (semaphore-wait chids/sem)
-    (set!-egid&euid (ftp-user-gid userstruct) (ftp-user-uid userstruct))
+    (change*-egid&euid userstruct)
     (unless (zero? (__xstat STAT-VER-LINUX spath st))
       (set! errno (ffi:saved-errno)))
-    (set!-euid&egid (getuid) (getgid))
-    (semaphore-post chids/sem)
+    (restore-euid&egid)
     (when errno (throw-errno* stat errno))
     st))
 
