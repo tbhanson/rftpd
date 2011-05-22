@@ -202,7 +202,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
        ftp-servers-params
        (λ (id params)
          (with-handlers ([any/c (λ(e) 
-                                  (unless-drdebug (displayln e))
+                                  (when-drdebug (displayln e))
                                   (print-error "Please check your settings for the server '~a'." id))])
            (let ([srv (new ftp:ftp-server%
                            [welcome-message         (ftp-srv-params-welcome-message params)]
@@ -510,7 +510,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/private (load-users server users-file)
       (with-handlers ([any/c (λ(e) 
-                               (unless-drdebug (displayln e))
+                               (when-drdebug (displayln e))
                                (print-error "Please check your users-config file."))])
         (call-with-input-file users-file
           (λ (in)
