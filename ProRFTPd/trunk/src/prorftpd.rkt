@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd v1.0.4
+ProRFTPd v1.0.5
 ----------------------------------------------------------------------
 
 Summary:
@@ -48,6 +48,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    bad-auth-sleep-sec
    max-auth-attempts 
    passwd-sleep-sec 
+   hide-dotfiles?
+   text-user&group-names?
+   hide-ids?
+   pasv-enable?
+   port-enable?
+   read-only?
    disable-ftp-commands
    allow-foreign-address
    passive-host&ports 
@@ -62,7 +68,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "ProRFTPd v1.0.4 <development>"]
+    (init-field [server-name&version        "ProRFTPd v1.0.5 <development>"]
                 [copyright                  "Copyright (c) 2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -196,7 +202,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
        ftp-servers-params
        (λ (id params)
          (with-handlers ([any/c (λ(e) 
-                                  (when-drdebug (displayln e))
+                                  (unless-drdebug (displayln e))
                                   (print-error "Please check your settings for the server '~a'." id))])
            (let ([srv (new ftp:ftp-server%
                            [welcome-message         (ftp-srv-params-welcome-message params)]
@@ -215,6 +221,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            [max-auth-attempts       (ftp-srv-params-max-auth-attempts params)]
                            [pass-sleep-sec          (ftp-srv-params-passwd-sleep-sec params)]
                            
+                           [hide-dotfiles?          (ftp-srv-params-hide-dotfiles? params)]
+                           [text-user&group-names?  (ftp-srv-params-text-user&group-names? params)]
+                           [hide-ids?               (ftp-srv-params-hide-ids? params)]
+                           [pasv-enable?            (ftp-srv-params-pasv-enable? params)]
+                           [port-enable?            (ftp-srv-params-port-enable? params)]
+                           [read-only?              (ftp-srv-params-read-only? params)]
                            [disable-ftp-commands    (ftp-srv-params-disable-ftp-commands params)]
                            
                            [allow-foreign-address   (ftp-srv-params-allow-foreign-address params)]
@@ -348,31 +360,37 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    (case (car param)
                      [(server)
                       (with-handlers ([any/c debug/handler])
-                        (let ([id                    #f]
-                              [welcome-message       server-name&version]
-                              [host                  #f]
-                              [port                  21]
-                              [ssl-protocol          #f]
-                              [ssl-key               "../certs/server-1.pem"]
-                              [ssl-certificate       "../certs/server-1.pem"]
-                              [max-allow-wait        25]
-                              [transfer-wait-time    120]
-                              [max-clients-per-IP    5]
+                        (let ([id                     #f]
+                              [welcome-message        server-name&version]
+                              [host                   #f]
+                              [port                   21]
+                              [ssl-protocol           #f]
+                              [ssl-key                "../certs/server-1.pem"]
+                              [ssl-certificate        "../certs/server-1.pem"]
+                              [max-allow-wait         25]
+                              [transfer-wait-time     120]
+                              [max-clients-per-IP     5]
                               ;====================
-                              [bad-auth-sleep-sec    60]
-                              [max-auth-attempts     5]
-                              [passwd-sleep-sec      0]
+                              [bad-auth-sleep-sec     60]
+                              [max-auth-attempts      5]
+                              [passwd-sleep-sec       0]
                               ;====================
-                              [disable-ftp-commands  null]
+                              [hide-dotfiles?         #f]
+                              [text-user&group-names? #t]
+                              [hide-ids?              #f]
+                              [pasv-enable?           #t]
+                              [port-enable?           #t]
+                              [read-only?             #f]
+                              [disable-ftp-commands   null]
                               ;====================
-                              [allow-foreign-address #f]
+                              [allow-foreign-address  #f]
                               ;====================
-                              [passive-host&ports    (ftp:make-passive-host&ports "127.0.0.1" 40000 40999)]
+                              [passive-host&ports     (ftp:make-passive-host&ports "127.0.0.1" 40000 40999)]
                               ;====================
-                              [default-root-dir      "../ftp-dir"]
+                              [default-root-dir       "../ftp-dir"]
                               ;====================
-                              [log-file              (format-file-name "../logs/prorftpd.log")]
-                              [users-file            "../conf/prorftpd.users"])
+                              [log-file               (format-file-name "../logs/prorftpd.log")]
+                              [users-file             "../conf/prorftpd.users"])
                           (if (or (symbol? (second param))
                                   (number? (second param)))
                               (set! id (second param))
@@ -414,6 +432,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (set! max-auth-attempts (second param)))
                                ((passwd-sleep-sec)
                                 (set! passwd-sleep-sec (second param)))
+                               ((hide-dotfiles?)
+                                (set! hide-dotfiles? (second param)))
+                               ((text-user&group-names?)
+                                (set! text-user&group-names? (second param)))
+                               ((hide-ids?)
+                                (set! hide-ids? (second param)))
+                               ((pasv-enable?)
+                                (set! pasv-enable? (second param)))
+                               ((port-enable?)
+                                (set! port-enable? (second param)))
+                               ((read-only?)
+                                (set! read-only? (second param)))
                                ((disable-ftp-commands)
                                 (set! disable-ftp-commands (second param)))
                                ((allow-foreign-address)
@@ -437,6 +467,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                            bad-auth-sleep-sec
                                                                            max-auth-attempts 
                                                                            passwd-sleep-sec 
+                                                                           hide-dotfiles?
+                                                                           text-user&group-names?
+                                                                           hide-ids?
+                                                                           pasv-enable?
+                                                                           port-enable?
+                                                                           read-only?
                                                                            disable-ftp-commands
                                                                            allow-foreign-address
                                                                            passive-host&ports 
@@ -474,7 +510,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/private (load-users server users-file)
       (with-handlers ([any/c (λ(e) 
-                               (when-drdebug (displayln e))
+                               (unless-drdebug (displayln e))
                                (print-error "Please check your users-config file."))])
         (call-with-input-file users-file
           (λ (in)

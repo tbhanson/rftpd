@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Library v1.0.9
+ProRFTPd Library v1.1.0
 ----------------------------------------------------------------------
 
 Summary:
@@ -513,6 +513,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 pass-sleep-sec
                 allow-foreign-address
                 log-output-port
+                [hide-dotfiles? #f]
+                [text-user&group-names? #t]
+                [hide-ids? #f]
+                [pasv-enable? #t]
+                [port-enable? #t]
+                [read-only? #f]
                 [disable-commands null])
     ;;
     ;; ---------- Superclass Initialization ----------
@@ -1071,8 +1077,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (let* ([full-path (string-append *root-dir* ftp-path)]
                   [stat (ftp-lstat full-path)]
                   [mode (Stat-mode stat)]
-                  [owner (uid->uname (Stat-uid stat))]
-                  [group (gid->gname (Stat-gid stat))])
+                  [owner (if hide-ids?
+                             "ftp"
+                             (and text-user&group-names? (uid->uname (Stat-uid stat))))]
+                  [group (if hide-ids?
+                             "ftp"
+                             (and text-user&group-names? (gid->gname (Stat-gid stat))))])
              (format "~a~a~a~a ~3F ~8F ~8F ~14F ~a" 
                      (cond
                        [(bitwise-bit-set? mode 15)
@@ -1106,26 +1116,32 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      (Stat-size stat)
                      (date-time->string (seconds->date (Stat-mtime stat))))))
          
-         (define (dlst ftp-dir)
+         (define (dlst ftp-dir show-dotfiles?)
            (if (ftp-dir-execute-ok? ftp-dir)
                (let* ([full-dir (string-append *root-dir* ftp-dir)]
                       [dirlist 
                        (if (ftp-dir-list-ok? ftp-dir)
                            (string-append*
-                            (if short?
-                                ".\n"
-                                (string-append (read-stat ftp-dir) " .\n"))
-                            (if short?
-                                "..\n"
-                                (string-append (if (= (file-or-directory-identity full-dir)
-                                                      (file-or-directory-identity *root-dir*))
-                                                   (read-stat ftp-dir)
-                                                   (read-stat (simplify-ftp-path ftp-dir 1)))
-                                               " ..\n"))
+                            (if show-dotfiles?
+                                (if short?
+                                    ".\n"
+                                    (string-append (read-stat ftp-dir) " .\n"))
+                                "")
+                            (if show-dotfiles?
+                                (if short?
+                                    "..\n"
+                                    (string-append (if (= (file-or-directory-identity full-dir)
+                                                          (file-or-directory-identity *root-dir*))
+                                                       (read-stat ftp-dir)
+                                                       (read-stat (simplify-ftp-path ftp-dir 1)))
+                                                   " ..\n"))
+                                "")
                             (map (λ (p)
                                    (let* ([spath (path->string p)]
                                           [ftp-spath (string-append ftp-dir "/" spath)])
-                                     (if (ftp-obj-exists? ftp-spath)
+                                     (if (and (ftp-obj-exists? ftp-spath)
+                                              (when (eq? (string-ref spath 0) #\.)
+                                                show-dotfiles?))
                                          (if short?
                                              (string-append spath "\n")
                                              (string-append (read-stat ftp-spath) " " spath "\n"))
@@ -1143,10 +1159,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (let ([dir (if (and params (eq? (string-ref params 0) #\-))
                        (let ([d (regexp-match #px"[^-\\w][^ \t-]+.*" params)])
                          (and d (substring (car d) 1)))
-                       params)])
+                       params)]
+              [show-dotfiles? (and (not hide-dotfiles?) 
+                                   params 
+                                   (regexp-match? #rx"^-[A-z]*[Aa][A-z]*" params))])
           (if dir
-              (dlst (build-ftp-spath* dir))
-              (dlst *current-dir*)))))
+              (dlst (build-ftp-spath* dir) show-dotfiles?)
+              (dlst *current-dir* show-dotfiles?)))))
     
     (define (MLST-COMMAND params)
       (local [(define (mlst ftp-path)
@@ -1169,22 +1188,28 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 (print-crlf/encoding** 'FILE-DIR-NOT-FOUND)))))
     
     (define (MLSD-COMMAND params)
-      (local [(define (mlsd ftp-path)
+      (local [(define (mlsd ftp-path show-dotfiles?)
                 (if (ftp-dir-execute-ok? ftp-path)
                     (let* ([path (string-append *root-dir* ftp-path)]
                            [dirlist 
                             (if (ftp-dir-list-ok? ftp-path)
                                 (string-append*
-                                 (string-append (mlst-info ftp-path #f ".") "\n")
-                                 (string-append (if (= (file-or-directory-identity path)
-                                                       (file-or-directory-identity *root-dir*))
-                                                    (mlst-info ftp-path #f "..")
-                                                    (mlst-info (string-append ftp-path "/..") #f ".."))
-                                                "\n")
+                                 (if show-dotfiles?
+                                     (string-append (mlst-info ftp-path #f ".") "\n")
+                                     "")
+                                 (if show-dotfiles?
+                                     (string-append (if (= (file-or-directory-identity path)
+                                                           (file-or-directory-identity *root-dir*))
+                                                        (mlst-info ftp-path #f "..")
+                                                        (mlst-info (string-append ftp-path "/..") #f ".."))
+                                                    "\n")
+                                     "")
                                  (map (λ (p)
                                         (let* ([spath (path->string p)]
                                                [ftp-spath (string-append ftp-path "/" spath)])
-                                          (if (ftp-obj-exists? ftp-spath)
+                                          (if (and (ftp-obj-exists? ftp-spath)
+                                                   (when (eq? (string-ref spath 0) #\.)
+                                                     show-dotfiles?))
                                               (string-append (mlst-info ftp-spath #f) "\n")
                                               "")))
                                       (directory-list path)))
@@ -1194,8 +1219,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                            ((Image) (string->bytes/encoding *locale-encoding* dirlist)))))
                     (print-crlf/encoding** 'DIR-NOT-FOUND)))]
         (if params
-            (mlsd (build-ftp-spath* params))
-            (mlsd *current-dir*))))
+            (mlsd (build-ftp-spath* params) (not hide-dotfiles?))
+            (mlsd *current-dir* (not hide-dotfiles?)))))
     
     (define (MKD-COMMAND params)
       (if params
@@ -1740,8 +1765,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              [name (if (string=? "/" ftp-path) "/" (path->string (file-name-from-path ftp-path)))]
              [stat (ftp-lstat path)]
              [mode (Stat-mode stat)]
-             [owner (uid->uname (Stat-uid stat))]
-             [group (gid->gname (Stat-gid stat))]
+             [owner (if hide-ids?
+                        "ftp"
+                        (and text-user&group-names? (uid->uname (Stat-uid stat))))]
+             [group (if hide-ids?
+                        "ftp"
+                        (and text-user&group-names? (gid->gname (Stat-gid stat))))]
              [file? (bitwise-bit-set? mode 15)]
              [parent-mode (and parent-stat (Stat-mode parent-stat))]
              [user *userstruct*]
@@ -1844,7 +1873,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (init)
       (set! *cmd-list*
             (remove*
-             (map (compose string-upcase symbol->string) disable-commands)
+             (append (if pasv-enable? null '("PASV" "EPSV"))
+                     (if port-enable? null '("PORT" "EPRT"))
+                     (if read-only? 
+                         '("APPE" "DELE" "MFF" "MFMT" "MKD" "RMD" "RNFR" "RNTO" "SITE" "STOR" "STOU" "XMKD" "XRMD") 
+                         null)
+                     (map (compose string-upcase symbol->string) disable-commands))
              `(("ABOR" #f ,ABOR-COMMAND . "ABOR")
                ("ALLO" #f ,ALLO-COMMAND . "ALLO <SP> <decimal-integer>")
                ("APPE" #f ,APPE-COMMAND . "APPE <SP> <pathname>")
@@ -1923,6 +1957,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [max-auth-attempts       exact-positive-integer?]
                        [pass-sleep-sec          exact-nonnegative-integer?]
                        
+                       [hide-dotfiles?          boolean?]
+                       [text-user&group-names?  boolean?]
+                       [hide-ids?               boolean?]
+                       [pasv-enable?            boolean?]
+                       [port-enable?            boolean?]
+                       [read-only?              boolean?]
                        [disable-ftp-commands    (listof symbol?)]
                        
                        [pasv-host&ports         passive-host&ports?]
@@ -1954,6 +1994,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [max-auth-attempts       5]
                 [pass-sleep-sec          0]
                 
+                [hide-dotfiles?          #f]
+                [text-user&group-names?  #t]
+                [hide-ids?               #f]
+                [pasv-enable?            #t]
+                [port-enable?            #t]
+                [read-only?              #f]
                 [disable-ftp-commands    null]
                 [allow-foreign-address   #f]
                 
@@ -2026,6 +2072,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                         (make-directory* (path-only log-file)))
                                                                       (open-output-file log-file #:exists 'append))
                                                                     (current-output-port))]
+                                               [hide-dotfiles? hide-dotfiles?]
+                                               [text-user&group-names? text-user&group-names?]
+                                               [hide-ids? hide-ids?]
+                                               [pasv-enable? pasv-enable?]
+                                               [port-enable? port-enable?]
+                                               [read-only? read-only?]
                                                [disable-commands disable-ftp-commands])
                                           handle-client-request 
                                           tcp-listener transfer-wait-time max-clients-per-IP)
