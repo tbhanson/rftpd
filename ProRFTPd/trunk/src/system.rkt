@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd System Library v1.5
+ProRFTPd System Library v1.6
 ----------------------------------------------------------------------
 
 Summary:
@@ -40,7 +40,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (provide/contract
  [crypt-string (string? string? . -> . string?)])
 
-(struct ftp-user (login real-user anonymous? uid gid ftp-perm root-dir))
+(struct ftp-user (login real-user anonymous? hide-ids? uid gid ftp-perm root-dir))
 (struct ftp-users (logins uids) #:mutable)
 (struct ftp-permissions (l? r? a? c? m? f? d?))
 
@@ -89,13 +89,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          correct?
          (ftp-permissions l? r? a? c? m? f? d?))))
 
-(define (ftp-useradd users login real-user anonymous? [ftp-perm #f] [root-dir "/"])
+(define (ftp-useradd users login real-user anonymous? hide-ids? [ftp-perm #f] [root-dir "/"])
   (let ([root-dir (and root-dir (delete-lrws root-dir))]
         [passwdStruct (getpwnam real-user)])
     (if passwdStruct
         (let ([user (ftp-user login
                               real-user
                               anonymous?
+                              hide-ids?
                               (Passwd-uid passwdStruct) 
                               (Passwd-gid passwdStruct) 
                               (make-ftp-permissions ftp-perm)

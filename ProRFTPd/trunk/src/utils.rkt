@@ -1,6 +1,6 @@
 #|
 
-RFTPd Utils Library v1.1
+RFTPd Utils Library v1.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -79,7 +79,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define (ssl-protocol? prt)
   (memq prt '(sslv2-or-v3 sslv2 sslv3 tls)))
 
-(define (alarm-clock period count [event (λ() 1)])
+(define (alarm-clock period count [event (λ() 1)] [start? #f])
   (let* ([tick count]
          [thd (thread (λ ()
                         (do () [(<= tick 0) (event)]
@@ -89,5 +89,5 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          [pause (λ () (thread-suspend thd))]
          [reset (λ () (set! tick count))]
          [kill (λ() (kill-thread thd))])
-    (pause)
+    (unless start? (pause))
     (values start pause reset kill)))

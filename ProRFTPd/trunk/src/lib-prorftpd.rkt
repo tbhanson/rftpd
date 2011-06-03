@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Library v1.1.0
+ProRFTPd Library v1.1.1
 ----------------------------------------------------------------------
 
 Summary:
@@ -58,8 +58,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    (RU . "501 ~a Синтаксическая ошибка (неверный параметр или аргумент)."))
      (MAX-CLIENTS-PER-IP (EN . "530 You have exceeded the limit on connections, please try again later.")
                          (RU . "530 Вы превысили лимит подключений, пожалуйста, повторите попытку позже."))
-     (TRANSFER-WAIT-TIME (EN . "421 Closing control connection due to inactivity from the client.")
-                         (RU . "421 Управляющее соединение закрывается из-за отсутствия активности со стороны клиента."))
+     (SESSION-TIMEOUT (EN . "421 Closing control connection due to inactivity from the client.")
+                      (RU . "421 Управляющее соединение закрывается из-за отсутствия активности со стороны клиента."))
      (CMD-NOT-IMPLEMENTED (EN . "502 ~a not implemented.")
                           (RU . "502 Команда ~a не реализована."))
      (INVALID-CMD-SYNTAX (EN . "500 Invalid command syntax.")
@@ -106,6 +106,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     (RU . " Вы вошли как ~a"))
      (STATUS-INFO-4 (EN . " TYPE: ~a; STRU: ~a; MODE: ~a")
                     (RU . " TYPE: ~a; STRU: ~a; MODE: ~a"))
+     (STATUS-INFO-5 (EN . " Active Process: ~a")
+                    (RU . " Active Process: ~a"))
      (SET-CMD (EN . "~a ~a set to ~a.")
               (RU . "~a ~a установлен в ~a."))
      (MISSING-PARAMS (EN . "504 Command not implemented for that parameter.")
@@ -286,23 +288,53 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (super-new)
     
     (init-field server-host
-                [pasv-listener #f]
                 [ssl-server-context #f]
                 [ssl-client-context #f]
-                [current-process (make-custodian)]
-                [active-host&port (ftp-host&port "127.0.0.1" 20)]
-                [passive-host&port (ftp-host&port "127.0.0.1" 20)]
                 [restart-marker #f]
-                [DTP 'active]
                 [representation-type 'ASCII]
                 [transfer-mode 'Stream]
                 [file-structure 'File]
-                [print-abort (λ() #f)]
-                [print-connect (λ() #f)]
-                [print-close (λ() #f)]
-                [print-ascii (λ(data out) #f)]
-                [log-store-event (λ(new-file-full-path exists-mode) #f)]
-                [log-copy-event (λ(file-full-path) #f)])
+                [port-timeout 15]
+                [pasv-timeout 15]
+                [data-timeout 15]
+                [reset-control-timer (λ () #f)]
+                [print-abort (λ () #f)]
+                [print-connect (λ () #f)]
+                [print-close (λ () #f)]
+                [print-ascii (λ (data out) #f)]
+                [print-log-event (λ (data) #f)]
+                [store-file-event-info (λ (new-file-full-path exists-mode) #f)]
+                [retrive-file-event-info (λ (file-full-path) #f)])
+    
+    (struct DTP-info (type status host&port custodian listener infomsg) #:mutable)
+    
+    (define curproc (DTP-info 'active 'shutdown (ftp-host&port "127.0.0.1" 20) #f #f #f))
+    
+    (define/public (kill-current-DTP)
+      (kill-DTP curproc))
+    
+    (define (kill-DTP dtp)
+      (unless (eq? (DTP-info-status dtp) 'shutdown)
+        (set-DTP-info-status! dtp 'shutdown)
+        (custodian-shutdown-all (DTP-info-custodian dtp))))
+    
+    (define/public (make-DTP type host port)
+      (parameterize ([current-custodian (make-custodian)])
+        (when (eq? (DTP-info-status curproc) 'wait)
+          (kill-DTP curproc))
+        (let ([dtp (DTP-info type 
+                             'wait 
+                             (ftp-host&port host port) 
+                             (current-custodian)
+                             (and (eq? type 'passive)
+                                  (tcp-listen port 1 #t host))
+                             #f)])
+          (set! curproc dtp)
+          (alarm-clock 1
+                       (if (eq? type 'passive) pasv-timeout port-timeout)
+                       (λ() (when (eq? (DTP-info-status dtp) 'wait)
+                              (kill-DTP dtp)))
+                       #t))))
     
     (define/public (net-accept tcp-listener)
       (let-values ([(in out) (tcp-accept tcp-listener)])
@@ -314,162 +346,167 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               #:shutdown-on-close? #t) 
             (values in out))))
     
+    (define/public (net-connect host port)
+      (let-values ([(in out) (tcp-connect host port)])
+        (if ssl-client-context 
+            (ports->ssl-ports in out 
+                              #:mode 'connect
+                              #:context ssl-client-context) 
+            (values in out))))
+    
+    (define/public (current-DTP-infomsg)
+      (and (eq? (DTP-info-status curproc) 'running)
+           (DTP-info-infomsg curproc)))
+    
     (define/public (ftp-data-transfer data [file? #f])
-      (case DTP
-        ((passive)
-         (passive-data-transfer data file?))
-        ((active)
-         (active-data-transfer data file?))))
+      (if (eq? (DTP-info-status curproc) 'wait)
+          (case (DTP-info-type curproc)
+            ((passive)
+             (passive-data-transfer curproc data file?))
+            ((active)
+             (active-data-transfer curproc data file?)))
+          (print-abort)))
     
-    (define (active-data-transfer data file?)
-      (set! current-process (make-custodian))
-      (let ([host (ftp-host&port-host active-host&port)]
-            [port (ftp-host&port-port active-host&port)])
-        (parameterize ([current-custodian current-process])
-          (thread (λ ()
-                    (with-handlers ([any/c (λ (e) 
-                                             ;(displayln e)
-                                             (print-abort))])
-                      (let-values ([(in out) (tcp-connect host port)])
-                        (print-connect)
-                        (when ssl-client-context
-                          (set!-values (in out) 
-                                       (ports->ssl-ports in out 
-                                                         #:mode 'connect
-                                                         #:context ssl-client-context)))
-                        (let-values ([(start-timer pause-timer reset-timer kill-timer)
-                                      (alarm-clock 1 15
-                                                   (λ() (custodian-shutdown-all current-process)))])
-                          (start-timer)
-                          (if file?
-                              (call-with-input-file data
-                                (λ (in)
-                                  (let loop ([dat (read-bytes 1048576 in)])
-                                    (reset-timer)
-                                    (unless (eof-object? dat)
-                                      (write-bytes dat out)
-                                      (loop (read-bytes 1048576 in))))))
-                              (case representation-type
-                                ((ASCII)
-                                 (print-ascii data out))
-                                ((Image)
-                                 (write-bytes data out))))
-                          (kill-timer))
-                        (flush-output out)
-                        (when file? (log-copy-event data))
-                        ;(close-input-port in);ssl required
-                        ;(close-output-port out);ssl required
-                        (print-close)))
-                    (custodian-shutdown-all current-process))))))
-    
-    (define (passive-data-transfer data file?)
-      (parameterize ([current-custodian current-process])
+    (define (active-data-transfer DTP data file?)
+      (parameterize ([current-custodian (DTP-info-custodian DTP)])
         (thread (λ ()
+                  (set-DTP-info-status! DTP 'running)
+                  (when file? (set-DTP-info-infomsg! DTP (retrive-file-event-info data)))
                   (with-handlers ([any/c (λ (e) (print-abort))])
-                    (let-values ([(in out) (net-accept pasv-listener)])
+                    (let-values ([(start-timer pause-timer reset-timer kill-timer)
+                                  (alarm-clock 1 data-timeout [λ() (print-abort) (kill-DTP DTP)] #t)]
+                                 [(in out) (net-connect (DTP->host DTP) (DTP->port DTP))])
                       (print-connect)
-                      (let-values ([(start-timer pause-timer reset-timer kill-timer)
-                                    (alarm-clock 1 15
-                                                 (λ() (custodian-shutdown-all current-process)))])
-                        (start-timer)
-                        (if file?
-                            (call-with-input-file data
-                              (λ (in)
-                                (let loop ([dat (read-bytes 1048576 in)])
-                                  (reset-timer)
-                                  (unless (eof-object? dat)
-                                    (write-bytes dat out)
-                                    (loop (read-bytes 1048576 in))))))
-                            (case representation-type
-                              ((ASCII)
-                               (print-ascii data out))
-                              ((Image)
-                               (write-bytes data out))))
-                        (kill-timer))
-                      ;(flush-output out)
-                      (close-output-port out);ssl required
-                      (when file? (log-copy-event data))
+                      (if file?
+                          (call-with-input-file data
+                            (λ (in)
+                              (let loop ([dat (read-bytes 1048576 in)])
+                                (reset-timer)
+                                (reset-control-timer)
+                                (unless (eof-object? dat)
+                                  (write-bytes dat out)
+                                  (loop (read-bytes 1048576 in))))))
+                          (case representation-type
+                            ((ASCII)
+                             (print-ascii data out))
+                            ((Image)
+                             (write-bytes data out))))
+                      (kill-timer)
+                      (flush-output out)
+                      (when file? (print-log-event (retrive-file-event-info data)))
                       (print-close)))
-                  (custodian-shutdown-all current-process)))))
+                  (kill-DTP DTP)))))
+    
+    (define (passive-data-transfer DTP data file?)
+      (parameterize ([current-custodian (DTP-info-custodian DTP)])
+        (thread (λ ()
+                  (set-DTP-info-status! DTP 'running)
+                  (when file? (set-DTP-info-infomsg! DTP (retrive-file-event-info data)))
+                  (with-handlers ([any/c (λ (e) (print-abort))])
+                    (let-values ([(start-timer pause-timer reset-timer kill-timer)
+                                  (alarm-clock 1 data-timeout [λ() (print-abort) (kill-DTP DTP)] #t)]
+                                 [(in out) (net-accept (DTP-info-listener DTP))])
+                      (print-connect)
+                      (if file?
+                          (call-with-input-file data
+                            (λ (in)
+                              (let loop ([dat (read-bytes 1048576 in)])
+                                (reset-timer)
+                                (reset-control-timer)
+                                (unless (eof-object? dat)
+                                  (write-bytes dat out)
+                                  (loop (read-bytes 1048576 in))))))
+                          (case representation-type
+                            ((ASCII)
+                             (print-ascii data out))
+                            ((Image)
+                             (write-bytes data out))))
+                      (kill-timer)
+                      (close-output-port out);ssl required
+                      (when file? (print-log-event (retrive-file-event-info data)))
+                      (print-close)))
+                  (kill-DTP DTP)))))
     
     (define/public (ftp-store-file userstruct new-file-full-path exists-mode)
-      (case DTP
-        ((passive)
-         (passive-store-file userstruct new-file-full-path exists-mode))
-        ((active)
-         (active-store-file userstruct new-file-full-path exists-mode))))
+      (if (eq? (DTP-info-status curproc) 'wait)
+          (case (DTP-info-type curproc)
+            ((passive)
+             (passive-store-file curproc userstruct new-file-full-path exists-mode))
+            ((active)
+             (active-store-file curproc userstruct new-file-full-path exists-mode)))
+          (print-abort)))
     
-    (define (active-store-file userstruct new-file-full-path exists-mode)
-      (set! current-process (make-custodian))
-      (let ([host (ftp-host&port-host active-host&port)]
-            [port (ftp-host&port-port active-host&port)])
-        (parameterize ([current-custodian current-process])
-          (thread (λ ()
-                    (with-handlers ([any/c (λ (e) (print-abort))])
+    (define (active-store-file DTP userstruct new-file-full-path exists-mode)
+      (parameterize ([current-custodian (DTP-info-custodian DTP)])
+        (thread (λ ()
+                  (set-DTP-info-status! DTP 'running)
+                  (set-DTP-info-infomsg! DTP (store-file-event-info new-file-full-path exists-mode))
+                  (with-handlers ([any/c (λ (e) (print-abort))])
+                    (let-values ([(start-timer pause-timer reset-timer kill-timer)
+                                  (alarm-clock 1 data-timeout [λ() (print-abort) (kill-DTP DTP)] #t)]
+                                 [(in out) (net-connect (DTP->host DTP) (DTP->port DTP))])
+                      (print-connect)
                       (let ([exists? (file-exists? new-file-full-path)])
                         (call-with-output-file new-file-full-path
                           (λ (fout)
                             (unless exists? 
                               (ftp-chown new-file-full-path
                                          (ftp-user-uid userstruct) (ftp-user-gid userstruct)))
-                            (let-values ([(in out) (tcp-connect host port)])
-                              (print-connect)
-                              (when ssl-client-context
-                                (set!-values (in out) 
-                                             (ports->ssl-ports in out 
-                                                               #:mode 'connect
-                                                               #:context ssl-client-context)))
-                              (when restart-marker
-                                (file-position fout restart-marker)
-                                (set! restart-marker #f))
-                              (let-values ([(start-timer pause-timer reset-timer kill-timer)
-                                            (alarm-clock 1 15
-                                                         (λ() (custodian-shutdown-all current-process)))])
-                                (start-timer)
-                                (let loop ([dat (read-bytes 1048576 in)])
-                                  (reset-timer)
-                                  (unless (eof-object? dat)
-                                    (write-bytes dat fout)
-                                    (loop (read-bytes 1048576 in))))
-                                (kill-timer))
-                              (flush-output fout)
-                              (log-store-event new-file-full-path exists-mode)
-                              (print-close)))
-                          #:mode 'binary
-                          #:exists exists-mode)))
-                    (custodian-shutdown-all current-process))))))
-    
-    (define (passive-store-file userstruct new-file-full-path exists-mode)
-      (parameterize ([current-custodian current-process])
-        (thread (λ ()
-                  (with-handlers ([any/c (λ (e) (print-abort))])
-                    (let ([exists? (file-exists? new-file-full-path)])
-                      (call-with-output-file new-file-full-path
-                        (λ (fout)
-                          (unless exists? 
-                            (ftp-chown new-file-full-path
-                                       (ftp-user-uid userstruct) (ftp-user-gid userstruct)))
-                          (let-values ([(in out) (net-accept pasv-listener)])
-                            (print-connect)
                             (when restart-marker
                               (file-position fout restart-marker)
                               (set! restart-marker #f))
-                            (let-values ([(start-timer pause-timer reset-timer kill-timer)
-                                          (alarm-clock 1 15
-                                                       (λ() (custodian-shutdown-all current-process)))])
-                              (start-timer)
-                              (let loop ([dat (read-bytes 1048576 in)])
-                                (reset-timer)
-                                (unless (eof-object? dat)
-                                  (write-bytes dat fout)
-                                  (loop (read-bytes 1048576 in))))
-                              (kill-timer))
+                            (let loop ([dat (read-bytes 1048576 in)])
+                              (reset-timer)
+                              (reset-control-timer)
+                              (unless (eof-object? dat)
+                                (write-bytes dat fout)
+                                (loop (read-bytes 1048576 in))))
+                            (kill-timer)
                             (flush-output fout)
-                            (log-store-event new-file-full-path exists-mode)
-                            (print-close)))
-                        #:mode 'binary
-                        #:exists exists-mode)))
-                  (custodian-shutdown-all current-process)))))))
+                            (print-log-event (store-file-event-info new-file-full-path exists-mode))
+                            (print-close))
+                          #:mode 'binary
+                          #:exists exists-mode))))
+                  (kill-DTP DTP)))))
+    
+    (define (passive-store-file DTP userstruct new-file-full-path exists-mode)
+      (parameterize ([current-custodian (DTP-info-custodian DTP)])
+        (thread (λ ()
+                  (set-DTP-info-status! DTP 'running)
+                  (set-DTP-info-infomsg! DTP (store-file-event-info new-file-full-path exists-mode))
+                  (with-handlers ([any/c (λ (e) (print-abort))])
+                    (let-values ([(start-timer pause-timer reset-timer kill-timer)
+                                  (alarm-clock 1 data-timeout [λ() (print-abort) (kill-DTP DTP)] #t)]
+                                 [(in out) (net-accept (DTP-info-listener DTP))])
+                      (print-connect)
+                      (let ([exists? (file-exists? new-file-full-path)])
+                        (call-with-output-file new-file-full-path
+                          (λ (fout)
+                            (unless exists? 
+                              (ftp-chown new-file-full-path
+                                         (ftp-user-uid userstruct) (ftp-user-gid userstruct)))
+                            (when restart-marker
+                              (file-position fout restart-marker)
+                              (set! restart-marker #f))
+                            (let loop ([dat (read-bytes 1048576 in)])
+                              (reset-timer)
+                              (reset-control-timer)
+                              (unless (eof-object? dat)
+                                (write-bytes dat fout)
+                                (loop (read-bytes 1048576 in))))
+                            (kill-timer)
+                            (flush-output fout)
+                            (print-log-event (store-file-event-info new-file-full-path exists-mode))
+                            (print-close))
+                          #:mode 'binary
+                          #:exists exists-mode))))
+                  (kill-DTP DTP)))))
+    
+    (define-syntax-rule (DTP->host dtp)
+      (ftp-host&port-host (DTP-info-host&port dtp)))
+    
+    (define-syntax-rule (DTP->port dtp)
+      (ftp-host&port-port (DTP-info-host&port dtp)))))
 
 (define ftp-session%
   (class (ftp-DTP% (ftp-encoding% (ftp-utils% object%)))
@@ -481,6 +518,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              string->bytes/encoding
              read-request
              net-accept
+             kill-current-DTP
+             make-DTP
+             current-DTP-infomsg
              ftp-data-transfer
              ftp-store-file)
     
@@ -488,12 +528,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                    ssl-server-context
                    ssl-client-context
                    default-locale-encoding
-                   current-process
-                   active-host&port
-                   passive-host&port
-                   pasv-listener
+                   reset-control-timer
                    restart-marker
-                   DTP
                    representation-type
                    transfer-mode
                    file-structure)
@@ -523,19 +559,18 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Superclass Initialization ----------
     ;;
-    (super-new [print-abort (λ() (print-crlf/encoding** 'TRANSFER-ABORTED))]
-               [print-connect (λ() (print-crlf/encoding** 'OPEN-DATA-CONNECTION representation-type))]
-               [print-close (λ() (print-crlf/encoding** 'TRANSFER-OK))]
-               [print-ascii (λ(data out) (print/encoding *locale-encoding* data out))]
-               [log-store-event (λ(new-file-full-path exists-mode)
-                                  (print-log-event
-                                   (format "~a data to file ~a"
-                                           (if (eq? exists-mode 'append) "Append" "Store")
-                                           (real-path->ftp-path new-file-full-path *root-dir*))))]
-               [log-copy-event (λ(file-full-path)
-                                 (print-log-event
-                                  (string-append "Read file "
-                                                 (real-path->ftp-path file-full-path *root-dir*))))])
+    (super-new [print-abort (λ () (print-crlf/encoding** 'TRANSFER-ABORTED))]
+               [print-connect (λ () (print-crlf/encoding** 'OPEN-DATA-CONNECTION representation-type))]
+               [print-close (λ () (print-crlf/encoding** 'TRANSFER-OK))]
+               [print-ascii (λ (data out) (print/encoding *locale-encoding* data out))]
+               [print-log-event (λ (data) (print-log-event data))]
+               [store-file-event-info (λ (new-file-full-path exists-mode)
+                                        (format "~a data to file ~a"
+                                                (if (eq? exists-mode 'append) "Append" "Store")
+                                                (real-path->ftp-path new-file-full-path *root-dir*)))]
+               [retrive-file-event-info (λ (file-full-path)
+                                          (string-append "Read file "
+                                                         (real-path->ftp-path file-full-path *root-dir*)))])
     ;;
     ;; ---------- Private Definitions ----------
     ;;
@@ -564,7 +599,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (handle-client-request tcp-listener transfer-wait-time max-clients-per-ip)
+    (define/public (handle-client-request tcp-listener session-timeout max-clients-per-ip)
       (let ([cust (make-custodian)])
         (with-handlers ([any/c (λ (e)
                                  ;(displayln e) 
@@ -587,12 +622,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (call/cc
                                  (λ (quit)
                                    (set! *quit* quit)
-                                   (accept-client-request transfer-wait-time)))
+                                   (accept-client-request session-timeout)))
                                 (when (hash-ref clients-table client-host #f)
                                   (if (<= (hash-ref clients-table client-host) 1)
                                       (hash-remove! clients-table client-host)
                                       (hash-set! clients-table client-host (sub1 (hash-ref clients-table client-host)))))
-                                (kill-current-ftp-process)
+                                (kill-current-DTP)
                                 (close-output-port *client-output-port*);ssl required
                                 (custodian-shutdown-all cust))))
                     (begin
@@ -608,8 +643,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (let-values ([(start-timer pause-timer reset-timer kill-timer)
                       (alarm-clock 1 no-transfer-time
                                    (λ()
-                                     (print-crlf/encoding** 'TRANSFER-WAIT-TIME)
+                                     (print-crlf/encoding** 'SESSION-TIMEOUT)
                                      (*quit*)))])
+          (set! reset-control-timer reset-timer)
           (do ([p (regexp-split #rx"\n|\r" welcome-message) (cdr p)])
             [(null? (cdr p))
              (printf-crlf/encoding *locale-encoding* *client-output-port* "220 ~a" (car p))]
@@ -747,7 +783,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (if params
           (print-crlf/encoding** 'SYNTAX-ERROR "")
           (begin
-            (kill-current-ftp-process)
+            (kill-current-DTP)
             (print-crlf/encoding** 'ABORT))))
     
     (define (NOOP-COMMAND params)
@@ -873,9 +909,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                              (private-IPv4? host)
                              (string=? host *client-host*)))
                     (begin
-                      (set! DTP 'active)
-                      ;(set! active-host&port (ftp-host&port host port))
-                      (set! active-host&port (ftp-host&port (if (private-IPv4? host) *client-host* host) port))
+                      (make-DTP 'active (if (private-IPv4? host) *client-host* host) port)
                       (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "PORT"))
                     (print-crlf/encoding** 'FORBIDDEN-ADDR-PORT))
                 (print-crlf/encoding** 'SYNTAX-ERROR "")))
@@ -890,12 +924,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                    random-gen))]
                             [(h1 h2 h3 h4) (apply values (regexp-split #rx"\\." passive-host))]
                             [(p1 p2) (quotient/remainder psv-port 256)])
-                (set! DTP 'passive)
-                (set! passive-host&port (ftp-host&port passive-host psv-port))
-                (kill-current-ftp-process)
-                (set! current-process (make-custodian))
-                (parameterize ([current-custodian current-process])
-                  (set! pasv-listener (tcp-listen psv-port 1 #t server-host)))
+                (make-DTP 'passive passive-host psv-port)
                 (print-crlf/encoding** 'PASV h1 h2 h3 h4 p1 p2))
               (print-crlf/encoding** 'BAD-PROTOCOL))))
     
@@ -920,7 +949,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
             (print-crlf/encoding** 'STATUS-INFO-2 *client-host*)
             (print-crlf/encoding** 'STATUS-INFO-3 *login*)
             (print-crlf/encoding** 'STATUS-INFO-4 representation-type file-structure transfer-mode)
-            ; Print status of the operation in progress?
+            ; Print status of the operation in progress
+            (when (current-DTP-infomsg)
+              (print-crlf/encoding** 'STATUS-INFO-5 (current-DTP-infomsg)))
             (print-crlf/encoding** 'END 211))))
     
     (define (LANG-COMMAND params)
@@ -996,27 +1027,22 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (private-IPv4? ip))
                            (string=? ip *client-host*)))
                   (begin
-                    (set! DTP 'active)
-                    (set! active-host&port (ftp-host&port (if (and (= prt 1) 
-                                                                   (private-IPv4? ip))
-                                                              *client-host* 
-                                                              ip)
-                                                          port))
+                    (make-DTP 'active 
+                              (if (and (= prt 1) 
+                                       (private-IPv4? ip))
+                                  *client-host* 
+                                  ip)
+                              port)
                     (print-crlf/encoding** 'CMD-SUCCESSFUL 200 "EPRT"))
                   (print-crlf/encoding** 'FORBIDDEN-ADDR-PORT))))
           (print-crlf/encoding** 'SYNTAX-ERROR "EPRT:")))
     
     (define (EPSV-COMMAND params)
       (local [(define (set-psv)
-                (set! DTP 'passive)
                 (let ([psv-port (+ passive-ports-from
                                    (random (- passive-ports-to passive-ports-from -1)
                                            random-gen))])
-                  (set! passive-host&port (ftp-host&port passive-host psv-port))
-                  (kill-current-ftp-process)
-                  (set! current-process (make-custodian))
-                  (parameterize ([current-custodian current-process])
-                    (set! pasv-listener (tcp-listen psv-port 1 #t server-host)))
+                  (make-DTP 'passive passive-host psv-port)
                   (print-crlf/encoding** 'EPSV psv-port)))
               (define (epsv-1)
                 (if (eq? *current-protocol* '|1|)
@@ -1077,12 +1103,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
            (let* ([full-path (string-append *root-dir* ftp-path)]
                   [stat (ftp-lstat full-path)]
                   [mode (Stat-mode stat)]
-                  [owner (if hide-ids?
-                             "ftp"
-                             (and text-user&group-names? (uid->uname (Stat-uid stat))))]
-                  [group (if hide-ids?
-                             "ftp"
-                             (and text-user&group-names? (gid->gname (Stat-gid stat))))])
+                  [owner (cond
+                           [current-user-hide-ids?
+                            (if (string? current-user-hide-ids?) current-user-hide-ids? "ftp")]
+                           [hide-ids?
+                            (if (string? hide-ids?) hide-ids? "ftp")]
+                           [else
+                            (and text-user&group-names? (uid->uname (Stat-uid stat)))])]
+                  [group (cond
+                           [current-user-hide-ids?
+                            (if (string? current-user-hide-ids?) current-user-hide-ids? "ftp")]
+                           [hide-ids?
+                            (if (string? hide-ids?) hide-ids? "ftp")]
+                           [else
+                            (and text-user&group-names? (gid->gname (Stat-gid stat)))])])
              (format "~a~a~a~a ~3F ~8F ~8F ~14F ~a" 
                      (cond
                        [(bitwise-bit-set? mode 15)
@@ -1631,8 +1665,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define-syntax (passive-ports-to stx)
       #'(passive-host&ports-to pasv-host&ports))
     
-    (define-syntax (kill-current-ftp-process stx)
-      #'(custodian-shutdown-all current-process))
+    (define-syntax (current-user-hide-ids? stx)
+      #'(ftp-user-hide-ids? *userstruct*))
     
     (define-syntax-rule (print-crlf/encoding* txt)
       (print-crlf/encoding *locale-encoding* txt *client-output-port*))
@@ -1765,12 +1799,20 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
              [name (if (string=? "/" ftp-path) "/" (path->string (file-name-from-path ftp-path)))]
              [stat (ftp-lstat path)]
              [mode (Stat-mode stat)]
-             [owner (if hide-ids?
-                        "ftp"
-                        (and text-user&group-names? (uid->uname (Stat-uid stat))))]
-             [group (if hide-ids?
-                        "ftp"
-                        (and text-user&group-names? (gid->gname (Stat-gid stat))))]
+             [owner (cond
+                      [current-user-hide-ids?
+                       (if (string? current-user-hide-ids?) current-user-hide-ids? "ftp")]
+                      [hide-ids?
+                       (if (string? hide-ids?) hide-ids? "ftp")]
+                      [else
+                       (and text-user&group-names? (uid->uname (Stat-uid stat)))])]
+             [group (cond
+                      [current-user-hide-ids?
+                       (if (string? current-user-hide-ids?) current-user-hide-ids? "ftp")]
+                      [hide-ids?
+                       (if (string? hide-ids?) hide-ids? "ftp")]
+                      [else
+                       (and text-user&group-names? (gid->gname (Stat-gid stat)))])]
              [file? (bitwise-bit-set? mode 15)]
              [parent-mode (and parent-stat (Stat-mode parent-stat))]
              [user *userstruct*]
@@ -1938,7 +1980,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 (define ssl-protocol/c (or/c ssl-protocol? not))
 (define not-null-string/c (and/c string? (λ(str) (not (string=? str "")))))
 (define path/c (or/c path-string? not))
-(define ftp-perm/c (or/c symbol? not))
+(define ftp-perm/c (or/c (λ(perm)
+                           (and (symbol? perm)
+                                (andmap (λ(c) (memq c '(#\l #\r #\a #\c #\m #\f #\d)))
+                                        (string->list (symbol->string perm)))))
+                         not))
+(define hide-ids/c (or/c boolean? not-null-string/c))
 
 (define/contract ftp-server%
   (class/c (init-field [welcome-message         not-null-string/c]
@@ -1950,7 +1997,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [ssl-certificate         path/c]
                        
                        [max-allow-wait          exact-positive-integer?]
-                       [transfer-wait-time      exact-positive-integer?]
+                       [port-timeout            exact-positive-integer?]
+                       [pasv-timeout            exact-positive-integer?]
+                       [data-timeout            exact-positive-integer?]
+                       [session-timeout         exact-positive-integer?]
                        [max-clients-per-IP      exact-positive-integer?]
                        
                        [bad-auth-sleep-sec      exact-nonnegative-integer?]
@@ -1959,7 +2009,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        
                        [hide-dotfiles?          boolean?]
                        [text-user&group-names?  boolean?]
-                       [hide-ids?               boolean?]
+                       [hide-ids?               hide-ids/c]
                        [pasv-enable?            boolean?]
                        [port-enable?            boolean?]
                        [read-only?              boolean?]
@@ -1971,7 +2021,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [default-root-dir        path-string?]
                        [default-locale-encoding string?]
                        [log-file                path/c])
-           [useradd (not-null-string/c not-null-string/c boolean? ftp-perm/c path/c . ->m . void?)])
+           [useradd (not-null-string/c not-null-string/c boolean? hide-ids/c ftp-perm/c path/c . ->m . void?)])
   
   (class (ftp-utils% object%)
     (super-new)
@@ -1987,7 +2037,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [ssl-certificate         #f]
                 
                 [max-allow-wait          25]
-                [transfer-wait-time      120]
+                [port-timeout            15]
+                [pasv-timeout            15]
+                [data-timeout            15]
+                [session-timeout         120]
                 [max-clients-per-IP      5]
                 
                 [bad-auth-sleep-sec      60]
@@ -2020,8 +2073,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (useradd login real-user anonymous? [ftp-perm #f] [root-dir "/"])
-      (ftp-useradd users-table login real-user anonymous? ftp-perm root-dir))
+    (define/public (useradd login real-user anonymous? hide-ids? [ftp-perm #f] [root-dir "/"])
+      (ftp-useradd users-table login real-user anonymous? hide-ids? ftp-perm root-dir))
     
     (define/public (clear-users-table)
       (clear-users-info users-table))
@@ -2064,6 +2117,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                [bad-auth-sleep-sec bad-auth-sleep-sec]
                                                [max-auth-attempts max-auth-attempts]
                                                [bad-auth-table (make-hash)]
+                                               [port-timeout port-timeout]
+                                               [pasv-timeout pasv-timeout]
+                                               [data-timeout data-timeout]
                                                [pass-sleep-sec pass-sleep-sec]
                                                [allow-foreign-address allow-foreign-address]
                                                [log-output-port (if log-file
@@ -2080,7 +2136,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                [read-only? read-only?]
                                                [disable-commands disable-ftp-commands])
                                           handle-client-request 
-                                          tcp-listener transfer-wait-time max-clients-per-IP)
+                                          tcp-listener 
+                                          session-timeout 
+                                          max-clients-per-IP)
                                     (main-loop))])
                 (set! server-thread (thread main-loop))))))
         (set! state 'running)))
