@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Library v1.1.1
+ProRFTPd Library v1.1.2
 ----------------------------------------------------------------------
 
 Summary:
@@ -543,10 +543,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 random-gen
                 server-responses
                 default-root-dir
-                bad-auth-sleep-sec
-                max-auth-attempts
+                login-fail-sleep
+                max-login-attempts
                 bad-auth-table
-                pass-sleep-sec
+                passwd-sleep
                 allow-foreign-address
                 log-output-port
                 [hide-dotfiles? #f]
@@ -689,7 +689,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
       (set! *userstruct* #f))
     
     (define (PASS-COMMAND params)
-      (sleep pass-sleep-sec)
+      (sleep passwd-sleep)
       (let ([correct
              (if (string? *login*)
                  (let ([pass params])
@@ -699,9 +699,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                      ((ftp-user-anonymous? (userinfo/login users-table *login*))
                       'anonymous-logged-in)
                      ((and (hash-ref bad-auth-table *login* #f)
-                           ((mcar (hash-ref bad-auth-table *login*)). >= . max-auth-attempts)
+                           ((mcar (hash-ref bad-auth-table *login*)). >= . max-login-attempts)
                            (<= ((current-seconds). - .(mcdr (hash-ref bad-auth-table *login*)))
-                               bad-auth-sleep-sec))
+                               login-fail-sleep))
                       (let ([pair (hash-ref bad-auth-table *login*)])
                         (set-mcar! pair (add1 (mcar pair)))
                         (set-mcdr! pair (current-seconds)))
@@ -2003,9 +2003,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [session-timeout         exact-positive-integer?]
                        [max-clients-per-IP      exact-positive-integer?]
                        
-                       [bad-auth-sleep-sec      exact-nonnegative-integer?]
-                       [max-auth-attempts       exact-positive-integer?]
-                       [pass-sleep-sec          exact-nonnegative-integer?]
+                       [login-fail-sleep        exact-nonnegative-integer?]
+                       [max-login-attempts      exact-positive-integer?]
+                       [passwd-sleep            exact-nonnegative-integer?]
                        
                        [hide-dotfiles?          boolean?]
                        [text-user&group-names?  boolean?]
@@ -2043,9 +2043,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [session-timeout         120]
                 [max-clients-per-IP      5]
                 
-                [bad-auth-sleep-sec      60]
-                [max-auth-attempts       5]
-                [pass-sleep-sec          0]
+                [login-fail-sleep        60]
+                [max-login-attempts      5]
+                [passwd-sleep            0]
                 
                 [hide-dotfiles?          #f]
                 [text-user&group-names?  #t]
@@ -2114,13 +2114,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                [default-root-dir (if (path? default-root-dir)
                                                                      (path->string default-root-dir)
                                                                      default-root-dir)]
-                                               [bad-auth-sleep-sec bad-auth-sleep-sec]
-                                               [max-auth-attempts max-auth-attempts]
+                                               [login-fail-sleep login-fail-sleep]
+                                               [max-login-attempts max-login-attempts]
                                                [bad-auth-table (make-hash)]
                                                [port-timeout port-timeout]
                                                [pasv-timeout pasv-timeout]
                                                [data-timeout data-timeout]
-                                               [pass-sleep-sec pass-sleep-sec]
+                                               [passwd-sleep passwd-sleep]
                                                [allow-foreign-address allow-foreign-address]
                                                [log-output-port (if log-file
                                                                     (begin

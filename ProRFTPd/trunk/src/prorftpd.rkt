@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd v1.0.6
+ProRFTPd v1.0.7
 ----------------------------------------------------------------------
 
 Summary:
@@ -48,9 +48,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
    data-timeout
    session-timeout
    max-clients-per-IP
-   bad-auth-sleep-sec
-   max-auth-attempts 
-   passwd-sleep-sec 
+   login-fail-sleep
+   max-login-attempts 
+   passwd-sleep 
    hide-dotfiles?
    text-user&group-names?
    hide-ids?
@@ -71,7 +71,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "ProRFTPd v1.0.6 <development>"]
+    (init-field [server-name&version        "ProRFTPd v1.0.7 <alpha>"]
                 [copyright                  "Copyright (c) 2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -85,8 +85,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 [control-protocol           'sslv3]
                 [control-key                "../certs/control.pem"]
                 [control-certificate        "../certs/control.pem"]
-                [bad-admin-auth-sleep-sec   120]
-                [max-admin-passwd-attempts  5]
+                [admin-login-fail-sleep     120]
+                [admin-max-passwd-attempts  5]
                 
                 [config-file                "../conf/prorftpd.conf"]
                 
@@ -223,9 +223,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                            [session-timeout         (ftp-srv-params-session-timeout params)]
                            [max-clients-per-IP      (ftp-srv-params-max-clients-per-IP params)]
                            
-                           [bad-auth-sleep-sec      (ftp-srv-params-bad-auth-sleep-sec params)]
-                           [max-auth-attempts       (ftp-srv-params-max-auth-attempts params)]
-                           [pass-sleep-sec          (ftp-srv-params-passwd-sleep-sec params)]
+                           [login-fail-sleep        (ftp-srv-params-login-fail-sleep params)]
+                           [max-login-attempts      (ftp-srv-params-max-login-attempts params)]
+                           [passwd-sleep            (ftp-srv-params-passwd-sleep params)]
                            
                            [hide-dotfiles?          (ftp-srv-params-hide-dotfiles? params)]
                            [text-user&group-names?  (ftp-srv-params-text-user&group-names? params)]
@@ -272,9 +272,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define/private (eval-cmd input-port output-port)
       (let ([hash-pass (read-line input-port)])
-        (if (and (or ((car bad-admin-auth). < . max-admin-passwd-attempts)
+        (if (and (or ((car bad-admin-auth). < . admin-max-passwd-attempts)
                      (> ((current-seconds). - .(cdr bad-admin-auth))
-                        bad-admin-auth-sleep-sec))
+                        admin-login-fail-sleep))
                  (string=? hash-pass (crypt-string (get-shadow-passwd control-admin)
                                                    (string-append "$1$" control-admin))))
             (let ([response (λ msg
@@ -384,9 +384,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                               [session-timeout        120]
                               [max-clients-per-IP     5]
                               ;====================
-                              [bad-auth-sleep-sec     60]
-                              [max-auth-attempts      5]
-                              [passwd-sleep-sec       0]
+                              [login-fail-sleep       60]
+                              [max-login-attempts     5]
+                              [passwd-sleep           0]
                               ;====================
                               [hide-dotfiles?         #f]
                               [text-user&group-names? #t]
@@ -441,12 +441,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                 (set! session-timeout sec)]
                                [`(max-clients-per-IP ,num)
                                 (set! max-clients-per-IP num)]
-                               [`(bad-auth-sleep-sec ,sec)
-                                (set! bad-auth-sleep-sec sec)]
-                               [`(max-auth-attempts ,count)
-                                (set! max-auth-attempts count)]
-                               [`(passwd-sleep-sec ,sec)
-                                (set! passwd-sleep-sec sec)]
+                               [`(login-fail-sleep ,sec)
+                                (set! login-fail-sleep sec)]
+                               [`(max-login-attempts ,count)
+                                (set! max-login-attempts count)]
+                               [`(passwd-sleep ,sec)
+                                (set! passwd-sleep sec)]
                                [`(hide-dotfiles? ,flag)
                                 (set! hide-dotfiles? flag)]
                                [`(text-user&group-names? ,flag)
@@ -482,9 +482,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                                                            data-timeout
                                                                            session-timeout
                                                                            max-clients-per-IP
-                                                                           bad-auth-sleep-sec
-                                                                           max-auth-attempts 
-                                                                           passwd-sleep-sec 
+                                                                           login-fail-sleep
+                                                                           max-login-attempts 
+                                                                           passwd-sleep 
                                                                            hide-dotfiles?
                                                                            text-user&group-names?
                                                                            hide-ids?
@@ -518,10 +518,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                    [`(certificate ,cert)
                                     (set! control-certificate cert)]))
                                params)]
-                             [`(bad-admin-auth-sleep-sec ,sec)
-                              (set! bad-admin-auth-sleep-sec sec)]
-                             [`(max-admin-passwd-attempts ,num)
-                              (set! max-admin-passwd-attempts num)])))
+                             [`(admin-login-fail-sleep ,sec)
+                              (set! admin-login-fail-sleep sec)]
+                             [`(admin-max-passwd-attempts ,num)
+                              (set! admin-max-passwd-attempts num)])))
                        params)]
                      [`(default-locale-encoding ,encoding)
                       (set! default-locale-encoding encoding)]))
