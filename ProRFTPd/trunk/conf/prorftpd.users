@@ -1,7 +1,16 @@
-(ftp-server-users
- ;   Login     | Real User | Anonymous? | Hide IDs? | FTP/Perm |      Root Dir
- ["root"         "root"         #f           #f          #f        "/"]
- ["user"         "misha"        #f           #t          #f        #f]
- ;["ftp"          "ftp"          #t           #t          lr        #f]
- ;["anonymous"    "ftp"          #t           #t          lr        #f]
+(prorftpd-users
+ (user "root"
+       [real-user      "root"]
+       [anonymous?     #f]
+       [hide-ids?      #f]
+       [ftp-perm       #f]
+       [local-root-dir "/"])
+ (user "user"
+       [real-user      "misha"]
+       [anonymous?     #f]
+       [ftp-perm       #f])
+ ;(user "ftp"
+ ;      [real-user      "ftp"])
+ ;(user "anonymous"
+ ;      [real-user      "ftp"])
  )

@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd v1.0.7
+ProRFTPd v1.0.8
 ----------------------------------------------------------------------
 
 Summary:
@@ -71,7 +71,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "ProRFTPd v1.0.7 <alpha>"]
+    (init-field [server-name&version        "ProRFTPd v1.0.8 <alpha>"]
                 [copyright                  "Copyright (c) 2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -534,10 +534,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         (call-with-input-file users-file
           (λ (in)
             (let ([conf (read in)])
-              (when (eq? (car conf) 'ftp-server-users)
+              (when (eq? (car conf) 'prorftpd-users)
                 (for-each (λ (user)
-                            (send server useradd
-                                  (car user) (second user) (third user) (fourth user) (fifth user) (sixth user)))
+                            (match user
+                              [`(user ,login . ,params)
+                               (with-handlers ([any/c (λ(e) 
+                                                        (when-drdebug (displayln e))
+                                                        (print-error "Please check your users-config file."))])
+                                 (let ([real-user      "ftp"]
+                                       [anonymous?     #t]
+                                       [hide-ids?      #t]
+                                       [ftp-perm       'lr]
+                                       [local-root-dir #f])
+                                   (for-each 
+                                    (λ (param)
+                                      (match param
+                                        [`(real-user ,sys-user)
+                                         (set! real-user sys-user)]
+                                        [`(anonymous? ,flag)
+                                         (set! anonymous? flag)]
+                                        [`(hide-ids? ,flag)
+                                         (set! hide-ids? flag)]
+                                        [`(ftp-perm ,perm)
+                                         (set! ftp-perm perm)]
+                                        [`(local-root-dir ,dir)
+                                         (set! local-root-dir dir)]))
+                                    params)
+                                   (send server useradd
+                                         login real-user anonymous? hide-ids? ftp-perm local-root-dir)))]))
                           (cdr conf))))))))
     
     (define-syntax-rule (print-error msg v ...)
