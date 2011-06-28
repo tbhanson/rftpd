@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Library v1.1.2
+ProRFTPd Library v1.1.3
 ----------------------------------------------------------------------
 
 Summary:
@@ -1438,7 +1438,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     (define (MFMT-COMMAND params)
       (if (and params (regexp-match? #rx"^[0-9]+[ ]+.+" params))
           (if (and (not (ftp-user-anonymous? *userstruct*))
-                   current-user-store-ok?)
+                   current-user-mfmt-enable?)
               (let* ([mt (car (regexp-match #rx"[0-9]+" params))]
                      [modtime (mdtm-time-format->seconds mt)]
                      [ftp-path (let ([p (get-params params)])
@@ -1528,7 +1528,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                  [unix-group #f])
              (if (and params (regexp-match? #rx"^([A-z\\.]+=[^ \t]+;)+[ ]+.+" params))
                  (if (and (not (ftp-user-anonymous? *userstruct*))
-                          current-user-store-ok?)
+                          current-user-mff-enable?)
                      (let* ([lst (string-split-char #\; params)]
                             [path (delete-lws (last lst))]
                             [facts (remove (last lst) lst)])
@@ -1622,7 +1622,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         
         (if params
             (if (and (not (ftp-user-anonymous? *userstruct*))
-                     current-user-store-ok?)
+                     current-user-site-enable?)
                 (let ([cmd (string->symbol (string-upcase (car (regexp-match #rx"[^ ]+" params))))])
                   (case cmd
                     [(CHMOD)
@@ -1667,6 +1667,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     (define-syntax (current-user-hide-ids? stx)
       #'(ftp-user-hide-ids? *userstruct*))
+    
+    (define-syntax (current-user-mfmt-enable? stx)
+      #'(ftp-user-mfmt-enable? *userstruct*))
+    
+    (define-syntax (current-user-mff-enable? stx)
+      #'(ftp-user-mff-enable? *userstruct*))
+    
+    (define-syntax (current-user-site-enable? stx)
+      #'(ftp-user-site-enable? *userstruct*))
     
     (define-syntax-rule (print-crlf/encoding* txt)
       (print-crlf/encoding *locale-encoding* txt *client-output-port*))
@@ -2021,7 +2030,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                        [default-root-dir        path-string?]
                        [default-locale-encoding string?]
                        [log-file                path/c])
-           [useradd (not-null-string/c not-null-string/c boolean? hide-ids/c ftp-perm/c path/c . ->m . void?)])
+           [useradd (not-null-string/c 
+                     not-null-string/c 
+                     boolean? 
+                     hide-ids/c 
+                     boolean?
+                     boolean?
+                     boolean?
+                     ftp-perm/c 
+                     path/c . ->m . void?)])
   
   (class (ftp-utils% object%)
     (super-new)
@@ -2073,8 +2090,25 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     ;;
     ;; ---------- Public Methods ----------
     ;;
-    (define/public (useradd login real-user anonymous? hide-ids? [ftp-perm #f] [root-dir "/"])
-      (ftp-useradd users-table login real-user anonymous? hide-ids? ftp-perm root-dir))
+    (define/public (useradd login 
+                            real-user 
+                            anonymous? 
+                            hide-ids? 
+                            mfmt-enable?
+                            mff-enable?
+                            site-enable?
+                            [ftp-perm #f] 
+                            [root-dir "/"])
+      (ftp-useradd users-table 
+                   login 
+                   real-user 
+                   anonymous? 
+                   hide-ids? 
+                   mfmt-enable? 
+                   mff-enable?
+                   site-enable?
+                   ftp-perm 
+                   root-dir))
     
     (define/public (clear-users-table)
       (clear-users-info users-table))

@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd v1.0.8
+ProRFTPd v1.0.9
 ----------------------------------------------------------------------
 
 Summary:
@@ -71,7 +71,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "ProRFTPd v1.0.8 <alpha>"]
+    (init-field [server-name&version        "ProRFTPd v1.0.9 <alpha>"]
                 [copyright                  "Copyright (c) 2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -544,6 +544,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                  (let ([real-user      "ftp"]
                                        [anonymous?     #t]
                                        [hide-ids?      #t]
+                                       [mfmt-enable?   #f]
+                                       [mff-enable?    #f]
+                                       [site-enable?   #f]
                                        [ftp-perm       'lr]
                                        [local-root-dir #f])
                                    (for-each 
@@ -555,13 +558,27 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                                          (set! anonymous? flag)]
                                         [`(hide-ids? ,flag)
                                          (set! hide-ids? flag)]
+                                        [`(mfmt-enable? ,flag)
+                                         (set! mfmt-enable? flag)]
+                                        [`(mff-enable? ,flag)
+                                         (set! mff-enable? flag)]
+                                        [`(site-enable? ,flag)
+                                         (set! site-enable? flag)]
                                         [`(ftp-perm ,perm)
                                          (set! ftp-perm perm)]
                                         [`(local-root-dir ,dir)
                                          (set! local-root-dir dir)]))
                                     params)
                                    (send server useradd
-                                         login real-user anonymous? hide-ids? ftp-perm local-root-dir)))]))
+                                         login 
+                                         real-user 
+                                         anonymous? 
+                                         hide-ids?
+                                         mfmt-enable?
+                                         mff-enable?
+                                         site-enable?
+                                         ftp-perm
+                                         local-root-dir)))]))
                           (cdr conf))))))))
     
     (define-syntax-rule (print-error msg v ...)

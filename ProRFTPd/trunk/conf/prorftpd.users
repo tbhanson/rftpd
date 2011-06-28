@@ -3,6 +3,9 @@
        [real-user      "root"]
        [anonymous?     #f]
        [hide-ids?      #f]
+       [mfmt-enable?   #t]
+       [mff-enable?    #t]
+       [site-enable?   #t]
        [ftp-perm       #f]
        [local-root-dir "/"])
  (user "user"
