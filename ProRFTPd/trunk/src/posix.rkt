@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd Platform Library v1.3
+ProRFTPd Posix Library v1.4
 ----------------------------------------------------------------------
 
 Summary:
@@ -28,7 +28,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (require ffi/unsafe)
 
-(provide (all-defined-out))
+(provide (except-out (all-defined-out)
+		     libcrypt
+		     libc))
 
 (define-syntax (define-lib stx)
   (syntax-case stx ()

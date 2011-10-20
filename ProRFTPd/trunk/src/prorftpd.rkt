@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd v1.0.9
+ProRFTPd v1.1.0
 ----------------------------------------------------------------------
 
 Summary:
@@ -32,7 +32,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
          (file "lib-ssl.rkt")
          (file "utils.rkt")
          (file "system.rkt")
-         (file "platform.rkt")
+         (file "posix.rkt")
          (prefix-in ftp: (file "lib-prorftpd.rkt")))
 
 (struct ftp-srv-params
@@ -71,7 +71,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   (class object%
     (super-new)
     
-    (init-field [server-name&version        "ProRFTPd v1.0.9 <alpha>"]
+    (init-field [server-name&version        "ProRFTPd v1.1.0 <alpha>"]
                 [copyright                  "Copyright (c) 2011 Mikhail Mosienko <netluxe@gmail.com>"]
                 [ci-help-msg                "Type 'help' or '?' for help."]
                 
@@ -92,7 +92,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                 
                 [default-locale-encoding    "UTF-8"])
     
-    (define bad-admin-auth (cons 0 0)) ; (cons attempts time) 
+    (define bad-admin-auth '(0 . 0)) ; (attempts . time) 
     (define ftp-servers-params (make-hash))
     (define ftp-servers #f)
     (define control-admin (uid->uname (getuid)))

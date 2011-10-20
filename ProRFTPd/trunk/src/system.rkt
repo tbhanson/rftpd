@@ -1,6 +1,6 @@
 #|
 
-ProRFTPd System Library v1.7
+ProRFTPd System Library v1.8
 ----------------------------------------------------------------------
 
 Summary:
@@ -28,7 +28,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 (require (prefix-in ffi: ffi/unsafe)
          (file "lib-string.rkt")
-         (file "platform.rkt"))
+         (file "posix.rkt"))
 
 (provide (except-out (all-defined-out)
                      (struct-out ftp-users)
