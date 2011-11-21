@@ -1,8 +1,0 @@
-#!/bin/sh
-# This script was created by make-mzscheme-launcher
-
-# {{{ bindir
-bindir="/home/misha/racket/bin"
-# }}} bindir
-
-exec "${bindir}/racket" -N "$0" '-I' 'scheme/init' '-qt-' '/home/misha/ProRFTPd/src/make-prorftpd-package.rkt'  ${1+"$@"}
